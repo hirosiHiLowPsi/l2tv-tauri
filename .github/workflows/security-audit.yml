@@ -53,5 +53,21 @@ jobs:
         run: rustup toolchain install 1.97.0 --profile minimal
       - name: Install cargo-audit
         run: cargo install cargo-audit --locked
+      - name: Verify ignored advisories are outside the Windows build
+        shell: bash
+        run: |
+          if cargo tree \
+            --manifest-path src-tauri/Cargo.toml \
+            --target x86_64-pc-windows-msvc \
+            -i quick-xml@0.39.4 2>/dev/null | grep -q "quick-xml v0.39.4"; then
+            echo "quick-xml 0.39.4 unexpectedly entered the Windows dependency tree."
+            exit 1
+          fi
       - name: Audit Cargo.lock
-        run: cargo audit --file src-tauri/Cargo.lock
+        # These advisories affect quick-xml 0.39.4 pulled only by the Linux
+        # Wayland file-dialog stack. L2TV Tauri is distributed for Windows,
+        # and the preceding step fails if that crate enters the Windows build.
+        run: >-
+          cargo audit --file src-tauri/Cargo.lock
+          --ignore RUSTSEC-2026-0194
+          --ignore RUSTSEC-2026-0195
