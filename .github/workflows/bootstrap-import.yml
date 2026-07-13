@@ -1,0 +1,38 @@
+name: Bootstrap validated source
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - l2tv-tauri-source-bootstrap.zip
+      - .github/workflows/bootstrap-import.yml
+
+permissions:
+  contents: write
+
+jobs:
+  import-source:
+    runs-on: windows-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Import source and remove bootstrap files
+        shell: pwsh
+        run: |
+          Expand-Archive -LiteralPath l2tv-tauri-source-bootstrap.zip -DestinationPath . -Force
+          Remove-Item -LiteralPath l2tv-tauri-source-bootstrap.zip -Force
+          Remove-Item -LiteralPath .github/workflows/bootstrap-import.yml -Force
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add --all
+          git diff --cached --quiet
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "No source changes were found."
+            exit 0
+          }
+
+          git commit -m "Import validated Tauri 2 source"
+          git push origin HEAD:main
