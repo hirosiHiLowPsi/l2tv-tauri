@@ -1,0 +1,50 @@
+[package]
+name = "l2tv-tauri"
+version = "2.1.0"
+description = "L2TV Tauri 2 edition"
+authors = ["HiLowPsi"]
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/hirosiHiLowPsi/l2tv-tauri"
+
+[lib]
+name = "l2tv_tauri_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "L2TV"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+base64 = "0.22"
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
+encoding_rs = "0.8"
+futures-util = "0.3"
+hex = "0.4"
+ipnet = "2"
+once_cell = "1"
+rand = "0.9"
+regex = "1"
+reqwest = { version = "0.12", default-features = false, features = ["brotli", "charset", "gzip", "http2", "json", "rustls-tls"] }
+rfd = "0.15"
+rusqlite = { version = "0.37", features = ["bundled"] }
+scraper = "0.24"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha1 = "0.10"
+sha2 = "0.10"
+tauri = { version = "2", features = [] }
+thiserror = "2"
+tokio = { version = "1", features = ["fs", "net", "rt-multi-thread", "sync", "time"] }
+url = "2"
+walkdir = "2"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = "symbols"

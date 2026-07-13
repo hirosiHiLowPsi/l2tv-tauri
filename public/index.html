@@ -1,0 +1,366 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>L2TV</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <div class="app-toolbar">
+        <button id="level-mode-toggle-button" type="button" class="level-mode-toggle-button button-secondary" title="表示をCLEAR LAMPとSCOREで切り替えます">
+          CLEAR LAMP
+        </button>
+        <div class="app-toolbar-actions">
+          <button
+            id="rival-toggle-button"
+            type="button"
+            class="rival-toggle-button button-secondary hidden"
+            aria-controls="rival-panel"
+            aria-expanded="false"
+          >
+            RIVAL
+          </button>
+          <button
+            id="menu-toggle-button"
+            type="button"
+            class="menu-toggle-button button-secondary"
+            aria-controls="control-drawer"
+            aria-expanded="false"
+          >
+            メニュー
+          </button>
+        </div>
+      </div>
+
+      <header class="hero">
+        <img class="app-logo app-logo-light" src="/assets/l2tv-logo-light.png" alt="L2TV LR2 Table Viewer">
+        <img class="app-logo app-logo-dark" src="/assets/l2tv-logo-dark.png" alt="L2TV LR2 Table Viewer">
+      </header>
+
+      <main class="layout">
+        <div id="main-feedback" class="main-feedback hidden" aria-live="polite"></div>
+        <section id="results-root" class="results-root hidden"></section>
+      </main>
+    </div>
+
+    <div id="rival-panel" class="rival-panel hidden" aria-hidden="true"></div>
+
+    <div id="menu-backdrop" class="menu-backdrop hidden" aria-hidden="true"></div>
+
+    <aside id="control-drawer" class="control-drawer" aria-hidden="true" tabindex="-1">
+      <div class="control-drawer-header">
+        <h2>メニュー</h2>
+        <button id="menu-close-button" type="button" class="button-secondary control-drawer-close">閉じる</button>
+      </div>
+
+      <div class="control-drawer-content">
+        <form id="analyze-form" class="settings-form">
+          <details class="settings-group" open>
+            <summary>
+              <span>読み込み</span>
+              <small>score.db と song.db</small>
+            </summary>
+            <div class="settings-group-body">
+            <label class="field">
+              <span>LR2 score.db パス</span>
+              <div class="path-picker">
+                <input
+                  id="score-db-path"
+                  name="scoreDbPath"
+                  placeholder="例: D:\LR2\LR2files\Database\Score\player.db"
+                />
+                <button id="browse-score-db" type="button" class="button-secondary path-picker-button">参照</button>
+              </div>
+            </label>
+
+            <label class="field">
+              <span>song.db パス</span>
+              <div class="path-picker">
+                <input
+                  id="song-db-path"
+                  name="songDbPath"
+                  placeholder="例: D:\LR2\LR2files\Database\song.db"
+                />
+                <button id="browse-song-db" type="button" class="button-secondary path-picker-button">参照</button>
+              </div>
+            </label>
+
+            <label class="field">
+              <span>score.db仕様</span>
+              <select id="score-db-mode-select" name="scoreDbMode">
+                <option value="auto">自動判別</option>
+                <option value="legacy">従来LR2IR互換</option>
+                <option value="stellaverse">StellaverseIR</option>
+                <option value="bms-ir">BMS-IR</option>
+              </select>
+            </label>
+
+            <label class="checkbox-setting stellaverse-network-consent">
+              <input id="allow-stellaverse-network" type="checkbox" name="allowStellaverseNetwork" />
+              <span>Stellaverse IRへの接続を許可する</span>
+            </label>
+            <p class="helper">ONにするとプレイヤーIDをStellaverse IRへ送信し、名前・順位・公開スコアを取得します。DBファイルやローカルスコアは送信しません。</p>
+
+            <div class="form-actions">
+              <div class="action-row">
+                <button id="analyze-button" type="submit">表とランプを読み込む</button>
+              </div>
+            </div>
+            </div>
+          </details>
+
+          <details class="settings-group" open>
+            <summary>
+              <span>難易度表</span>
+              <small>読み込む表を選択</small>
+            </summary>
+            <div class="settings-group-body">
+            <textarea id="table-urls" name="tableUrls" class="hidden" rows="1" aria-hidden="true"></textarea>
+
+            <div class="field textarea-field table-list-field">
+              <div class="table-list-heading">
+                <span>難易度表管理</span>
+                <button id="open-table-list-button" type="button" class="button-secondary compact-button">
+                  一覧を開く
+                </button>
+              </div>
+              <p id="table-list-status" class="helper">難易度表一覧から選択します。</p>
+              <p id="table-list-selection-summary" class="helper">選択中: 0件</p>
+            </div>
+            </div>
+          </details>
+
+          <details class="settings-group">
+            <summary>
+              <span>表示</span>
+              <small>言語・テーマ・IR</small>
+            </summary>
+            <div class="settings-group-body">
+            <label class="field">
+              <span>表示言語</span>
+              <select id="language-select" name="language">
+                <option value="ja">日本語</option>
+                <option value="en">English</option>
+              </select>
+            </label>
+
+            <label class="field">
+              <span>テーマ</span>
+              <select id="theme-select" name="theme">
+                <option value="l2tv-pop">Light Aqua</option>
+                <option value="lr2ir-dark">Geek Dark</option>
+              </select>
+            </label>
+
+            <div class="display-settings" aria-label="IR表示設定">
+              <span class="display-settings-title">IR表示</span>
+              <label class="checkbox-setting">
+                <input id="show-ir-rank" type="checkbox" name="showIrRank" checked />
+                <span>譜面一覧にIR順位を表示する</span>
+              </label>
+              <label class="checkbox-setting">
+                <input id="show-ir-status" type="checkbox" name="showIrStatus" checked />
+                <span>難易度表にIR状況を表示する</span>
+              </label>
+            </div>
+            </div>
+          </details>
+
+          <details class="settings-group">
+            <summary>
+              <span>その他</span>
+              <small>更新・保存先・データ</small>
+            </summary>
+            <div class="settings-group-body">
+              <label class="field">
+                <span>スクショ保存先</span>
+                <div class="path-picker">
+                  <input
+                    id="screenshot-dir-path"
+                    name="screenshotDirPath"
+                    placeholder="空欄の場合は既定のscreenshotフォルダに保存"
+                  />
+                  <button id="browse-screenshot-dir" type="button" class="button-secondary path-picker-button">参照</button>
+                </div>
+              </label>
+
+              <label class="field">
+                <span>ライバルフォルダ</span>
+                <div class="path-picker">
+                  <input
+                    id="rival-folder-path"
+                    name="rivalFolderPath"
+                    placeholder="例: D:\LR2\LR2files\Rival"
+                  />
+                  <button id="browse-rival-folder" type="button" class="button-secondary path-picker-button">参照</button>
+                </div>
+              </label>
+
+              <label class="checkbox-setting">
+                <input id="include-bp-updates" type="checkbox" name="includeBpUpdates" />
+                <span>本日更新にBPが減った譜面も表示する</span>
+              </label>
+
+              <label class="checkbox-setting">
+                <input id="include-unlisted-updates" type="checkbox" name="includeUnlistedUpdates" />
+                <span>表外譜面も更新楽曲として表示する</span>
+              </label>
+
+              <div class="form-actions form-actions-secondary data-transfer-actions">
+                <button id="export-transfer-button" type="button" class="button-secondary">
+                  引継ぎデータを書き出す
+                </button>
+                <button id="import-transfer-button" type="button" class="button-secondary">
+                  引継ぎデータを読み込む
+                </button>
+                <button id="clear-saved-button" type="button" class="button-secondary">保存データを消す</button>
+              </div>
+            </div>
+          </details>
+        </form>
+
+        <section class="menu-status-section">
+          <div class="menu-status-heading">
+            <h2>進行状況</h2>
+            <p>読み込み結果とエラーを確認できます。</p>
+          </div>
+          <div id="status-box" class="status-box">待機中です。</div>
+        </section>
+      </div>
+    </aside>
+
+    <div id="export-message-modal" class="export-message-modal hidden" aria-hidden="true" role="dialog" aria-modal="true">
+      <div class="export-message-card">
+        <p id="export-message-text" class="export-message-text"></p>
+        <button id="export-message-ok" type="button" class="button-secondary export-message-ok">OK</button>
+      </div>
+    </div>
+
+    <div
+      id="table-list-modal"
+      class="table-list-modal hidden"
+      aria-hidden="true"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="table-list-modal-title"
+    >
+      <div class="table-list-modal-card">
+        <div class="table-list-modal-header">
+          <div>
+            <h2 id="table-list-modal-title">難易度表一覧</h2>
+            <p id="table-list-modal-status" class="helper">チェックした難易度表が読み込み対象になります。</p>
+          </div>
+          <button id="table-list-close-button" type="button" class="button-secondary compact-button">閉じる</button>
+        </div>
+
+        <div class="table-list-modal-toolbar">
+          <div class="table-list-mode-toggle" role="group" aria-label="難易度表追加モード">
+            <button
+              id="table-list-search-mode-button"
+              type="button"
+              class="table-list-mode-button active"
+              aria-pressed="true"
+            >
+              検索
+            </button>
+            <button
+              id="table-list-url-mode-button"
+              type="button"
+              class="table-list-mode-button"
+              aria-pressed="false"
+            >
+              URL指定
+            </button>
+          </div>
+          <input id="table-list-filter" class="table-list-filter" placeholder="表名で検索" />
+          <input id="custom-table-url-input" class="table-list-url-input hidden" placeholder="https://..." />
+          <button id="add-custom-table-url-button" type="button" class="button-secondary compact-button hidden">
+            追加
+          </button>
+          <button id="refresh-table-list-button" type="button" class="button-secondary compact-button">
+            一覧を更新
+          </button>
+        </div>
+
+        <div id="table-list-tag-filters" class="table-list-tag-filters" role="group" aria-label="タグフィルター">
+          <button type="button" class="table-list-tag-filter active" data-table-tag-filter="all" aria-pressed="true">
+            <span>すべて</span>
+            <span class="table-list-tag-count" data-table-tag-count="all">0</span>
+          </button>
+          <button type="button" class="table-list-tag-filter" data-table-tag-filter="general" aria-pressed="false">
+            <span>General</span>
+            <span class="table-list-tag-count" data-table-tag-count="general">0</span>
+          </button>
+          <button type="button" class="table-list-tag-filter" data-table-tag-filter="personal" aria-pressed="false">
+            <span>Personal</span>
+            <span class="table-list-tag-count" data-table-tag-count="personal">0</span>
+          </button>
+          <button
+            type="button"
+            class="table-list-tag-filter"
+            data-table-tag-filter="self-made-chart-only"
+            aria-pressed="false"
+          >
+            <span>Self-made Chart Only</span>
+            <span class="table-list-tag-count" data-table-tag-count="self-made-chart-only">0</span>
+          </button>
+          <button
+            id="table-list-selected-only-toggle"
+            type="button"
+            class="table-list-tag-filter table-list-selected-only-toggle"
+            aria-pressed="false"
+          >
+            <span class="table-list-selected-only-label">追加済み</span>
+            <span id="table-list-selected-only-count" class="table-list-tag-count">0</span>
+          </button>
+        </div>
+
+        <div id="table-presets" class="table-presets table-list-modal-list"></div>
+      </div>
+    </div>
+
+    <template id="table-section-template">
+      <section class="panel table-section">
+        <div class="table-header">
+          <div class="table-title-wrap">
+            <h2>
+              <button type="button" class="table-name-toggle" aria-expanded="false">
+                <span class="table-name"></span>
+              </button>
+            </h2>
+          </div>
+          <a class="table-link" target="_blank" rel="noopener noreferrer">Table Link</a>
+        </div>
+
+        <div class="table-info-panel hidden">
+          <div class="metric-strip"></div>
+
+          <div class="summary-grid">
+            <div class="summary-card">
+              <h3>ランプ内訳</h3>
+              <div class="lamp-summary"></div>
+              <h3 class="score-summary-heading">スコア内訳</h3>
+              <div class="score-summary"></div>
+              <h3 class="ir-summary-heading">IR状況</h3>
+              <div class="ir-summary"></div>
+            </div>
+            <div class="summary-card">
+              <h3 class="level-summary-title">CLEAR LAMP</h3>
+              <div class="level-summary"></div>
+            </div>
+          </div>
+
+          <details class="chart-details">
+            <summary>譜面一覧を開く</summary>
+            <div class="chart-table-wrap"></div>
+          </details>
+        </div>
+      </section>
+    </template>
+
+    <script src="/tauri-bridge.js"></script>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

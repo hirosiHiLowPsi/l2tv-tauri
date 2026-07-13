@@ -1,0 +1,276 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>L2TV 構造説明書</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+      }
+      body {
+        margin: 0;
+        font-family: "Segoe UI", "Meiryo", sans-serif;
+        line-height: 1.65;
+        background: #f4f8ff;
+        color: #112;
+      }
+      main {
+        max-width: 1080px;
+        margin: 0 auto;
+        padding: 24px 18px 60px;
+      }
+      h1, h2, h3 {
+        line-height: 1.35;
+        margin-top: 1.5em;
+        margin-bottom: 0.5em;
+      }
+      h1 {
+        margin-top: 0;
+      }
+      section {
+        background: #ffffffcc;
+        border: 1px solid #cad8f3;
+        border-radius: 14px;
+        padding: 14px 16px;
+        margin-top: 14px;
+      }
+      code {
+        background: #eaf1ff;
+        border-radius: 6px;
+        padding: 1px 6px;
+      }
+      pre {
+        background: #101827;
+        color: #dfe8ff;
+        border-radius: 10px;
+        padding: 12px 14px;
+        overflow: auto;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 8px;
+      }
+      th, td {
+        border: 1px solid #cddaf2;
+        padding: 8px 10px;
+        text-align: left;
+        vertical-align: top;
+      }
+      th {
+        background: #eaf2ff;
+      }
+      .muted {
+        color: #445b87;
+      }
+      .small {
+        font-size: 0.92rem;
+      }
+      @media (prefers-color-scheme: dark) {
+        body {
+          background: #0b1020;
+          color: #e8eeff;
+        }
+        section {
+          background: #121a30;
+          border-color: #2f4068;
+        }
+        code {
+          background: #1b2646;
+          color: #e3ebff;
+        }
+        th, td {
+          border-color: #3c4f7a;
+        }
+        th {
+          background: #1a2645;
+        }
+        .muted {
+          color: #b3c3ea;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>L2TV 構造説明書</h1>
+      <p class="muted small">
+        対象バージョン: <code>2.1.0</code> / 更新日: 2026-07-13<br />
+        この文書は現在の実装（<code>server.js</code> / <code>database-worker.js</code> / <code>electron-main.js</code> / <code>public/app.js</code>）をもとに、機能とコード構造を把握しやすくまとめたものです。
+      </p>
+
+      <section>
+        <h2>1. 全体像</h2>
+        <p>
+          L2TV は「Node.js サーバー + フロントエンド + Electron ラッパー」で構成されます。
+          ブラウザ版は <code>node server.js</code> で起動し、デスクトップ版は Electron が内部で同サーバーを起動して表示します。
+        </p>
+        <pre>Browser/Electron UI (public/index.html + public/app.js + public/styles.css)
+        ↓ fetch("/api/*")
+Node HTTP Server (server.js)
+        ├─ 難易度表 (table.html → header.json → score.json)
+        └─ Database Worker (score.db / song.db / Rival DB, read-only sqlite)
+</pre>
+      </section>
+
+      <section>
+        <h2>2. ディレクトリ構成（主要部分）</h2>
+        <pre>lunatic-rave2-lr2ir/
+├─ public/
+│  ├─ index.html                 # UI骨格
+│  ├─ app.js                     # 画面ロジック・描画・永続化
+│  ├─ styles.css                 # 全テーマ/全コンポーネントのスタイル
+│  └─ l2tv-architecture-manual.html  # この説明書
+├─ server.js                     # API + 静的配信 + 解析ロジック本体
+├─ database-worker.js            # DB読み取りをメインスレッドから分離
+├─ electron-main.js              # Electronメインプロセス
+├─ electron-preload.js           # IPCブリッジ
+├─ build-win.ps1                 # Windowsビルド支援スクリプト
+└─ package.json                  # 起動/ビルド定義
+</pre>
+      </section>
+
+      <section>
+        <h2>3. フロントエンド（public/app.js）</h2>
+        <h3>3.1 役割</h3>
+        <ul>
+          <li>入力UI（score.db / song.db / 難易度表URL / テーマ / プリセット）の管理</li>
+          <li>API呼び出し（<code>/api/analyze</code> など）</li>
+          <li>集計表示（Player Data / Lamp Updates / レベルグラフ / 譜面一覧）</li>
+          <li>IndexedDB への状態保存と復元</li>
+          <li>差分比較（前回→今回）による更新ランプ抽出と画像出力</li>
+        </ul>
+
+        <h3>3.2 主要状態</h3>
+        <table>
+          <thead>
+            <tr><th>変数</th><th>内容</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>latestAnalysis</code></td><td>最新解析結果全体</td></tr>
+            <tr><td><code>levelChartMode</code></td><td><code>lamp</code> / <code>score</code> のグラフモード</td></tr>
+            <tr><td><code>selectedThemeMode</code></td><td><code>l2tv-pop</code> / <code>lr2ir-dark</code></td></tr>
+            <tr><td><code>selectedTablePresetIds</code></td><td>プリセット難易度表の選択状態</td></tr>
+            <tr><td><code>tableInfoPanelOpenState</code></td><td>各難易度表の開閉状態</td></tr>
+            <tr><td><code>chartDetailsOpenState</code></td><td>譜面一覧 details の開閉状態</td></tr>
+            <tr><td><code>chartListOpenLevelsState</code></td><td>レベル単位折りたたみ状態</td></tr>
+            <tr><td><code>latestLampImprovements</code></td><td>前回比で更新された譜面リスト</td></tr>
+          </tbody>
+        </table>
+
+        <h3>3.3 永続化キー（IndexedDB）</h3>
+        <ul>
+          <li><code>FORM_STATE_KEY</code>: 入力欄・テーマ・モードなど</li>
+          <li><code>LAST_ANALYSIS_KEY</code>: 最新解析結果</li>
+          <li><code>PLAYER_PROFILE_CACHE_KEY</code>: 取得済みプレイヤープロフィール</li>
+          <li><code>TABLE_PRESET_SELECTION_KEY</code>: プリセット選択状態</li>
+        </ul>
+      </section>
+
+      <section>
+        <h2>4. サーバー（server.js）</h2>
+        <h3>4.1 API エンドポイント</h3>
+        <table>
+          <thead>
+            <tr><th>Method/Path</th><th>用途</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>GET /api/health</code></td><td>ヘルスチェック</td></tr>
+            <tr><td><code>GET /api/client-config</code></td><td>ローカルAPI用トークン取得</td></tr>
+            <tr><td><code>POST /api/analyze</code></td><td>総合解析（難易度表 + ローカルDB 突合）</td></tr>
+            <tr><td><code>POST /api/profile-from-db</code></td><td>score.db から名前/段位取得</td></tr>
+            <tr><td><code>POST /api/local-db-state</code></td><td>score.db / song.db の更新状態（size/mtime）取得</td></tr>
+            <tr><td><code>GET /*</code></td><td><code>public/</code> の静的配信</td></tr>
+          </tbody>
+        </table>
+
+        <h3>4.2 解析の分岐</h3>
+        <ul>
+          <li><code>score.db</code> は必須。ローカルDB中心でランプ/スコア/BP/プレイ回数を取得</li>
+          <li><code>song.db</code> がある場合は、曲カタログ、NO SONG 判定、st/sl段位情報を取得</li>
+          <li>難易度表未入力: プレイヤーデータのみ表示</li>
+        </ul>
+
+        <h3>4.3 主要キャッシュ</h3>
+        <ul>
+          <li><code>responseCache</code>: URL取得結果</li>
+          <li><code>tableCache</code>: 読み込んだ難易度表</li>
+          <li><code>playerMyListCache</code>: score.db 読み込み結果</li>
+          <li><code>songDbCatalogCache</code>: song.db の曲カタログ参照結果</li>
+        </ul>
+      </section>
+
+      <section>
+        <h2>5. データソースと突合ロジック</h2>
+        <h3>5.1 難易度表</h3>
+        <ol>
+          <li><code>table.html</code> から <code>&lt;meta name="bmstable"&gt;</code> を取得</li>
+          <li><code>header.json</code> の <code>data_url</code> から <code>score.json</code> 取得</li>
+          <li>譜面を正規化（title/artist/level/md5/sha256/ヒント）</li>
+        </ol>
+
+        <h3>5.2 ローカルDB</h3>
+        <ul>
+          <li><code>score.db player</code>: 名前、<code>grade_7</code>/<code>grade_14</code>、通算打鍵情報</li>
+          <li><code>score.db score</code>: clear/playcount/perfect/great/bad/poor/minbp など</li>
+          <li><code>song.db song</code>: hash別の曲存在判定</li>
+          <li><code>song.db grade</code>: st/sl スキルアナライザー段位解析</li>
+        </ul>
+      </section>
+
+      <section>
+        <h2>6. Electron 連携</h2>
+        <h3>6.1 electron-main.js</h3>
+        <ul>
+          <li>アプリ起動時に <code>127.0.0.1:4173</code> を自プロセスで確保し、起動成功を確認してから組み込み画面を表示</li>
+          <li>Stellaverse IR通信は利用者が明示的に許可した場合だけ実行し、アクセスを直列化・間隔制御・キャッシュ</li>
+          <li>配布版は原則 <code>exe</code> 隣にポータブルデータフォルダを作成して保存</li>
+          <li>IPC:
+            <code>lr2ir:pick-file</code>（db参照ダイアログ）、
+            <code>lr2ir:save-image</code>（PNG保存）</li>
+        </ul>
+
+        <h3>6.2 electron-preload.js</h3>
+        <p>
+          レンダラへ <code>window.lr2irDesktop</code> を公開し、
+          <code>pickFile</code> / <code>saveImage</code> を安全に呼べるようにしています。
+        </p>
+      </section>
+
+      <section>
+        <h2>7. 起動とビルド</h2>
+        <table>
+          <thead>
+            <tr><th>目的</th><th>コマンド</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>ブラウザ版起動</td><td><code>node server.js</code></td></tr>
+            <tr><td>Electron起動</td><td><code>npm run desktop</code></td></tr>
+            <tr><td>Windows 7z + SHA256作成</td><td><code>npm run dist:win</code></td></tr>
+            <tr><td>PowerShellビルド補助</td><td><code>.\build-win.ps1</code></td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section>
+        <h2>8. 拡張ポイント（改修時の入口）</h2>
+        <ul>
+          <li>UI追加: <code>public/index.html</code> + <code>public/app.js</code></li>
+          <li>表示ルール/テーマ調整: <code>public/styles.css</code></li>
+          <li>解析仕様変更: <code>server.js</code>（<code>analyzeRequest</code>, <code>enrichTable</code> 付近）</li>
+          <li>DB参照拡張: <code>loadPlayerMyListFromScoreDb</code>, <code>loadSongDbCatalogData</code>, <code>loadLocalSkillAnalyzerProgress</code></li>
+          <li>デスクトップ機能追加: <code>electron-main.js</code> + <code>electron-preload.js</code></li>
+        </ul>
+      </section>
+
+      <section>
+        <h2>9. 補足</h2>
+        <p class="small">
+          この説明書は実装理解用の「開発者向けガイド」です。仕様変更が入った場合は、<code>public/app.js</code> と
+          <code>server.js</code> の関数名/キー名に合わせて本書も更新してください。
+        </p>
+      </section>
+    </main>
+  </body>
+</html>

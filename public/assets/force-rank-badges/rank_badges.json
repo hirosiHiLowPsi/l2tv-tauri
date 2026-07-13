@@ -1,0 +1,148 @@
+{
+  "version": 1,
+  "canvas": {
+    "width": 512,
+    "height": 512
+  },
+  "sheet": {
+    "columns": 5,
+    "rows": 3
+  },
+  "badges": [
+    {
+      "index": 1,
+      "file": "01_SLATE.png",
+      "title": "SLATE",
+      "tier": "slate",
+      "accent": "#d9dde4",
+      "column": 0,
+      "row": 0
+    },
+    {
+      "index": 2,
+      "file": "02_AZURE.png",
+      "title": "AZURE",
+      "tier": "azure",
+      "accent": "#4aa3ff",
+      "column": 1,
+      "row": 0
+    },
+    {
+      "index": 3,
+      "file": "03_AMBER.png",
+      "title": "AMBER",
+      "tier": "amber",
+      "accent": "#ffad38",
+      "column": 2,
+      "row": 0
+    },
+    {
+      "index": 4,
+      "file": "04_JADE.png",
+      "title": "JADE",
+      "tier": "jade",
+      "accent": "#64e592",
+      "column": 3,
+      "row": 0
+    },
+    {
+      "index": 5,
+      "file": "05_AMETHYST.png",
+      "title": "AMETHYST",
+      "tier": "amethyst",
+      "accent": "#c772ff",
+      "column": 4,
+      "row": 0
+    },
+    {
+      "index": 6,
+      "file": "06_CRIMSON.png",
+      "title": "CRIMSON",
+      "tier": "crimson",
+      "accent": "#ff5a4e",
+      "column": 0,
+      "row": 1
+    },
+    {
+      "index": 7,
+      "file": "07_ARGENT.png",
+      "title": "ARGENT",
+      "tier": "argent",
+      "accent": "#e8eef8",
+      "column": 1,
+      "row": 1
+    },
+    {
+      "index": 8,
+      "file": "08_AURUM.png",
+      "title": "AURUM",
+      "tier": "aurum",
+      "accent": "#ffc84d",
+      "column": 2,
+      "row": 1
+    },
+    {
+      "index": 9,
+      "file": "09_OBSIDIAN.png",
+      "title": "OBSIDIAN",
+      "tier": "obsidian",
+      "accent": "#b36bff",
+      "column": 3,
+      "row": 1
+    },
+    {
+      "index": 10,
+      "file": "10_ASTRAL_I.png",
+      "title": "ASTRAL I",
+      "tier": "astral-1",
+      "accent": "#55a9ff",
+      "column": 4,
+      "row": 1
+    },
+    {
+      "index": 11,
+      "file": "11_ASTRAL_II.png",
+      "title": "ASTRAL II",
+      "tier": "astral-2",
+      "accent": "#6caeff",
+      "column": 0,
+      "row": 2
+    },
+    {
+      "index": 12,
+      "file": "12_ASTRAL_III.png",
+      "title": "ASTRAL III",
+      "tier": "astral-3",
+      "accent": "#de77ff",
+      "column": 1,
+      "row": 2
+    },
+    {
+      "index": 13,
+      "file": "13_ASTRAL_IV.png",
+      "title": "ASTRAL IV",
+      "tier": "astral-4",
+      "accent": "#8cdcff",
+      "column": 2,
+      "row": 2
+    },
+    {
+      "index": 14,
+      "file": "14_SINGULARITY.png",
+      "title": "SINGULARITY",
+      "tier": "singularity",
+      "accent": "#f0b4ff",
+      "column": 3,
+      "row": 2
+    },
+    {
+      "index": 15,
+      "file": "15_EVENT_HORIZONE.png",
+      "title": "EVENT HORIZONE",
+      "tier": "event-horizone",
+      "accent": "#f8d66d",
+      "column": 4,
+      "row": 2
+    }
+  ]
+}

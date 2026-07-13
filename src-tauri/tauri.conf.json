@@ -1,0 +1,25 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "L2TV",
+  "version": "2.1.0",
+  "identifier": "com.hilowpsi.l2tv.tauri",
+  "build": {
+    "frontendDist": "../dist/frontend"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [],
+    "security": {
+      "csp": "default-src 'self'; base-uri 'none'; object-src 'none'; frame-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: data:; font-src 'self' data:; connect-src ipc: http://ipc.localhost",
+      "capabilities": ["main-capability"],
+      "freezePrototype": true
+    }
+  },
+  "bundle": {
+    "active": false,
+    "targets": [],
+    "icon": ["icons/icon.ico"],
+    "publisher": "HiLowPsi",
+    "copyright": "Copyright 2026 HiLowPsi"
+  }
+}
