@@ -1,0 +1,75 @@
+name: Build release candidate
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build portable Windows package
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: npm
+      - name: Install Rust toolchain
+        shell: pwsh
+        run: rustup toolchain install 1.97.0 --profile minimal --component rustfmt,clippy --target x86_64-pc-windows-msvc
+      - name: Install npm dependencies
+        run: npm ci
+      - name: Run required checks
+        run: npm run ci
+      - name: Build 7z and checksums
+        run: npm run package:win
+      - name: Verify package
+        shell: pwsh
+        run: pwsh -NoProfile -File scripts/verify-release.ps1 -VerifyArchive
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: L2TV-Tauri-Windows-x64
+          path: |
+            dist/*.7z
+            dist/*.sha256.txt
+          if-no-files-found: error
+          retention-days: 30
+
+  draft-release:
+    name: Create draft GitHub Release
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - name: Download release artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: L2TV-Tauri-Windows-x64
+          path: release-assets
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: release-assets/*.7z
+      - name: Create draft pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release create "${{ github.ref_name }}"
+          release-assets/*
+          --draft
+          --prerelease
+          --generate-notes
+          --title "L2TV Tauri ${{ github.ref_name }}"

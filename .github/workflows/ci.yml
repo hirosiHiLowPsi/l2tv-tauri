@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-and-build:
+    name: Test and build on Windows
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: npm
+
+      - name: Install Rust toolchain
+        shell: pwsh
+        run: rustup toolchain install 1.97.0 --profile minimal --component rustfmt,clippy --target x86_64-pc-windows-msvc
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Check Rust formatting
+        run: npm run check:format
+
+      - name: Run application tests
+        run: npm test
+
+      - name: Run Clippy with warnings denied
+        run: npm run check:clippy
+
+      - name: Build release executable
+        run: npm run build
+
+      - name: Verify release executable
+        shell: pwsh
+        run: pwsh -NoProfile -File scripts/verify-release.ps1
