@@ -14,12 +14,21 @@ pub struct CacheEntry {
     pub value: Value,
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct BeatorajaCalendarSource {
+    pub score_db_path: String,
+    pub song_db_path: String,
+    pub language: String,
+    pub theme: String,
+}
+
 pub struct AppState {
     pub client: reqwest::Client,
     pub stellaverse_gate: Semaphore,
     pub last_stellaverse_request: Mutex<Option<Instant>>,
     pub table_cache: Mutex<HashMap<String, CacheEntry>>,
     pub stellaverse_cache: Mutex<HashMap<String, CacheEntry>>,
+    pub beatoraja_calendar_source: Mutex<Option<BeatorajaCalendarSource>>,
     pub e2e_marker_path: Option<PathBuf>,
 }
 
@@ -38,6 +47,7 @@ impl AppState {
             last_stellaverse_request: Mutex::new(None),
             table_cache: Mutex::new(HashMap::new()),
             stellaverse_cache: Mutex::new(HashMap::new()),
+            beatoraja_calendar_source: Mutex::new(None),
             e2e_marker_path: if cfg!(debug_assertions) {
                 std::env::var_os("L2TV_E2E_MARKER").map(PathBuf::from)
             } else {
@@ -54,6 +64,7 @@ pub async fn request(path: &str, body: Value, state: &AppState) -> Result<Value>
         "/api/table-meta" => tables::table_meta(body, state).await,
         "/api/profile-from-db" => database::profile_from_db(body, state).await,
         "/api/local-db-state" => database::local_db_state(body).await,
+        "/api/beatoraja-history" => database::beatoraja_history(body).await,
         _ => Err(message("未対応のローカルAPIです。")),
     }
 }

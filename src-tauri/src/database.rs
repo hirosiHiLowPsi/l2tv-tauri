@@ -1,15 +1,21 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use chrono::{Datelike, Local, NaiveDate, TimeZone};
 use encoding_rs::SHIFT_JIS;
 use regex::Regex;
-use rusqlite::{Connection, OpenFlags, Row};
+use rusqlite::{Connection, OpenFlags, Row, params};
 use serde::Serialize;
 use serde_json::{Map, Number, Value, json};
 
 use crate::api::AppState;
+use crate::beatoraja_random::{
+    r_random_layout_for_display_7k as beatoraja_r_random_layout_for_display_7k,
+    random_layout_for_display_7k as beatoraja_random_layout_for_display_7k,
+};
 use crate::error::{Result, message};
+use crate::openlr2_random::random_layout_for_display_7k;
 use crate::stellaverse;
 use crate::tables;
 
@@ -31,6 +37,32 @@ struct ScoreEntry {
     bad_count: Option<i64>,
     poor_count: Option<i64>,
     miss_count: Option<i64>,
+    play_option: Option<String>,
+    option_code: Option<i64>,
+    random_seed: Option<i64>,
+    random_layout: Option<String>,
+    key_mode: Option<i64>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct SongInfo {
+    md5: String,
+    title: String,
+    artist: String,
+    key_mode: Option<i64>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct Lr2SongCatalog {
+    by_md5: HashMap<String, SongInfo>,
+    md5_hashes: HashSet<String>,
+    loaded: bool,
+}
+
+#[derive(Clone, Debug, Default)]
+struct BeatorajaSongCatalog {
+    by_sha256: HashMap<String, SongInfo>,
+    md5_hashes: HashSet<String>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -52,6 +84,7 @@ struct Profile {
 struct PlayerData {
     score_db_path: String,
     song_db_path: String,
+    game_data_mode: String,
     score_db_mode: String,
     profile: Profile,
     entries: Vec<ScoreEntry>,
@@ -168,14 +201,22 @@ pub async fn local_db_state(body: Value) -> Result<Value> {
         .get("scoreDbPath")
         .and_then(Value::as_str)
         .unwrap_or_default();
+    let game_data_mode = normalize_game_data_mode(
+        body.get("gameDataMode")
+            .and_then(Value::as_str)
+            .unwrap_or("lr2"),
+        Path::new(score),
+    );
     let song = resolve_song_db_path(
         score,
         body.get("songDbPath")
             .and_then(Value::as_str)
             .unwrap_or_default(),
+        &game_data_mode,
     );
     Ok(json!({
         "fetchedAt": chrono::Utc::now().to_rfc3339(),
+        "gameDataMode": game_data_mode,
         "scoreDb": file_state(score).await,
         "songDb": file_state(song.to_string_lossy().as_ref()).await,
     }))
@@ -188,13 +229,20 @@ pub async fn profile_from_db(body: Value, state: &AppState) -> Result<Value> {
             .unwrap_or_default(),
     );
     if score_path.as_os_str().is_empty() {
-        return Err(message("LR2 score.db パスを入力してください。"));
+        return Err(message("score.db パスを入力してください。"));
     }
+    let game_data_mode = normalize_game_data_mode(
+        body.get("gameDataMode")
+            .and_then(Value::as_str)
+            .unwrap_or("lr2"),
+        &score_path,
+    );
     let song_path = resolve_song_db_path(
         score_path.to_string_lossy().as_ref(),
         body.get("songDbPath")
             .and_then(Value::as_str)
             .unwrap_or_default(),
+        &game_data_mode,
     );
     let mode = normalize_score_db_mode(
         body.get("scoreDbMode")
@@ -213,7 +261,7 @@ pub async fn profile_from_db(body: Value, state: &AppState) -> Result<Value> {
             .unwrap_or("both"),
     );
     let mut player = tokio::task::spawn_blocking(move || {
-        load_player_data(&score_path, &song_path, &mode, &skill_mode)
+        load_player_data(&score_path, &song_path, &mode, &skill_mode, &game_data_mode)
     })
     .await
     .map_err(|error| message(error.to_string()))??;
@@ -228,13 +276,20 @@ pub async fn analyze(body: Value, state: &AppState) -> Result<Value> {
             .unwrap_or_default(),
     );
     if score_path.as_os_str().is_empty() {
-        return Err(message("LR2 score.db のパスを入力してください。"));
+        return Err(message("score.db のパスを入力してください。"));
     }
+    let game_data_mode = normalize_game_data_mode(
+        body.get("gameDataMode")
+            .and_then(Value::as_str)
+            .unwrap_or("lr2"),
+        &score_path,
+    );
     let song_path = resolve_song_db_path(
         score_path.to_string_lossy().as_ref(),
         body.get("songDbPath")
             .and_then(Value::as_str)
             .unwrap_or_default(),
+        &game_data_mode,
     );
     let rival_path = clean_path(
         body.get("rivalFolderPath")
@@ -287,7 +342,7 @@ pub async fn analyze(body: Value, state: &AppState) -> Result<Value> {
     }
 
     let mut player = tokio::task::spawn_blocking(move || {
-        load_player_data(&score_path, &song_path, &mode, &skill_mode)
+        load_player_data(&score_path, &song_path, &mode, &skill_mode, &game_data_mode)
     })
     .await
     .map_err(|error| message(error.to_string()))??;
@@ -312,6 +367,8 @@ pub async fn analyze(body: Value, state: &AppState) -> Result<Value> {
             "exScore": entry.ex_score,
             "scoreRate": entry.score_rate,
             "missCount": entry.miss_count,
+            "playOption": entry.play_option,
+            "randomLayout": entry.random_layout,
         })).collect::<Vec<_>>()
     });
     let unlisted = if include_unlisted {
@@ -330,6 +387,7 @@ pub async fn analyze(body: Value, state: &AppState) -> Result<Value> {
         "player": {
             "id": if player.profile.player_id.is_empty() { "local" } else { &player.profile.player_id },
             "sourceType": "local-score-db",
+            "gameDataMode": player.game_data_mode,
             "scoreDbMode": player.score_db_mode,
             "name": player.profile.name,
             "lr2Id": player.profile.lr2_id,
@@ -357,6 +415,212 @@ pub async fn analyze(body: Value, state: &AppState) -> Result<Value> {
     }))
 }
 
+pub async fn beatoraja_history(body: Value) -> Result<Value> {
+    let score_path = clean_path(
+        body.get("scoreDbPath")
+            .and_then(Value::as_str)
+            .unwrap_or_default(),
+    );
+    if score_path.as_os_str().is_empty() {
+        return Err(message("beatoraja score.db のパスを入力してください。"));
+    }
+    let song_path = resolve_song_db_path(
+        score_path.to_string_lossy().as_ref(),
+        body.get("songDbPath")
+            .and_then(Value::as_str)
+            .unwrap_or_default(),
+        "beatoraja",
+    );
+    let current_year = Local::now().year();
+    let requested_year = body
+        .get("year")
+        .and_then(Value::as_i64)
+        .and_then(|value| i32::try_from(value).ok())
+        .filter(|value| (2000..=2100).contains(value))
+        .unwrap_or(current_year);
+    let selected_date = body
+        .get("date")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
+
+    tokio::task::spawn_blocking(move || {
+        load_beatoraja_history(
+            &score_path,
+            &song_path,
+            requested_year,
+            selected_date.as_deref(),
+        )
+    })
+    .await
+    .map_err(|error| message(error.to_string()))?
+}
+
+#[derive(Default)]
+struct BeatorajaHistoryDay {
+    play_count: usize,
+    chart_hashes: HashSet<String>,
+}
+
+fn load_beatoraja_history(
+    score_path: &Path,
+    song_path: &Path,
+    requested_year: i32,
+    selected_date: Option<&str>,
+) -> Result<Value> {
+    if !score_path.is_file() {
+        return Err(message("指定された beatoraja score.db が見つかりません。"));
+    }
+    if !song_path.is_file() {
+        return Err(message(
+            "指定された beatoraja songdata.db が見つかりません。",
+        ));
+    }
+    let history_path = score_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("scoredatalog.db");
+    if !history_path.is_file() {
+        return Err(message(
+            "score.db と同じフォルダに scoredatalog.db が見つかりません。",
+        ));
+    }
+
+    let history_database = open_readonly(&history_path)?;
+    if !table_has_column(&history_database, "scoredatalog", "sha256")
+        || !table_has_column(&history_database, "scoredatalog", "date")
+    {
+        return Err(message(
+            "選択した scoredatalog.db はbeatoraja形式ではありません。",
+        ));
+    }
+    let legacy_latest_only = table_has_primary_key(&history_database, "scoredatalog");
+    let song_catalog = load_beatoraja_song_catalog(song_path)?;
+    let available_years = beatoraja_history_years(&history_database)?;
+    let (start_timestamp, end_timestamp) = local_year_bounds(requested_year)?;
+    let history_rows = query_json_rows_between(
+        &history_database,
+        "SELECT sha256, mode, clear, epg, lpg, egr, lgr, egd, lgd, ebd, lbd, \
+         epr, lpr, ems, lms, notes, combo, minbp, option, seed, date, state \
+         FROM scoredatalog WHERE date >= ?1 AND date < ?2 ORDER BY date ASC",
+        start_timestamp,
+        end_timestamp,
+    )?;
+
+    let selected_date = selected_date
+        .map(|value| {
+            NaiveDate::parse_from_str(value, "%Y-%m-%d")
+                .map_err(|_| message("履歴の日付形式が正しくありません。"))
+        })
+        .transpose()?
+        .filter(|value| value.year() == requested_year);
+    let selected_date_text = selected_date.map(|value| value.format("%Y-%m-%d").to_string());
+    let mut days: BTreeMap<String, BeatorajaHistoryDay> = BTreeMap::new();
+    let mut entries = Vec::new();
+    let mut layout_cache: HashMap<(String, i64, i64), String> = HashMap::new();
+
+    for row in history_rows {
+        let Some(timestamp) = get_i64(&row, "date") else {
+            continue;
+        };
+        let Some(local_time) = Local.timestamp_opt(timestamp, 0).single() else {
+            continue;
+        };
+        let day_key = local_time.format("%Y-%m-%d").to_string();
+        let sha256 = valid_hex(get_text(&row, "sha256"), 64);
+        let day = days.entry(day_key.clone()).or_default();
+        day.play_count += 1;
+        if !sha256.is_empty() {
+            day.chart_hashes.insert(sha256.clone());
+        }
+
+        if selected_date_text.as_deref() != Some(day_key.as_str()) {
+            continue;
+        }
+        let song = song_catalog.by_sha256.get(&sha256);
+        let perfect = sum_present(get_i64(&row, "epg"), get_i64(&row, "lpg"));
+        let great = sum_present(get_i64(&row, "egr"), get_i64(&row, "lgr"));
+        let (ex_score, max_ex_score, score_rate, max_offset) =
+            score_values(perfect, great, get_i64(&row, "notes"), Some(1));
+        let option_code = get_i64(&row, "option");
+        let option_info = beatoraja_score_option_info(
+            &sha256,
+            Some(1),
+            option_code,
+            get_i64(&row, "seed"),
+            song.and_then(|value| value.key_mode),
+            &mut layout_cache,
+        );
+        entries.push(json!({
+            "timestamp": timestamp,
+            "time": local_time.format("%H:%M:%S").to_string(),
+            "title": song.map(|value| value.title.as_str()).filter(|value| !value.is_empty()).unwrap_or("Unknown Chart"),
+            "artist": song.map(|value| value.artist.as_str()).unwrap_or_default(),
+            "lampStatus": beatoraja_lamp_status(get_i64(&row, "clear"), Some(1)),
+            "exScore": ex_score,
+            "maxExScore": max_ex_score,
+            "scoreRate": score_rate,
+            "maxOffset": max_offset,
+            "missCount": get_i64(&row, "minbp"),
+            "playOption": option_info.play_option,
+            "randomLayout": option_info.random_layout,
+            "keyMode": song.and_then(|value| value.key_mode),
+        }));
+    }
+    entries.reverse();
+
+    let latest_date = days.keys().next_back().cloned();
+    let total_plays = days.values().map(|day| day.play_count).sum::<usize>();
+    let days = days
+        .into_iter()
+        .map(|(date, day)| {
+            json!({
+                "date": date,
+                "playCount": day.play_count,
+                "chartCount": day.chart_hashes.len(),
+            })
+        })
+        .collect::<Vec<_>>();
+
+    Ok(json!({
+        "year": requested_year,
+        "availableYears": available_years,
+        "days": days,
+        "latestDate": latest_date,
+        "selectedDate": selected_date_text,
+        "entries": entries,
+        "totalPlays": total_plays,
+        "legacyLatestOnly": legacy_latest_only,
+        "sourceFileName": "scoredatalog.db",
+    }))
+}
+
+fn local_year_bounds(year: i32) -> Result<(i64, i64)> {
+    let start = Local
+        .with_ymd_and_hms(year, 1, 1, 0, 0, 0)
+        .single()
+        .ok_or_else(|| message("履歴の年を処理できませんでした。"))?;
+    let end = Local
+        .with_ymd_and_hms(year + 1, 1, 1, 0, 0, 0)
+        .single()
+        .ok_or_else(|| message("履歴の年を処理できませんでした。"))?;
+    Ok((start.timestamp(), end.timestamp()))
+}
+
+fn beatoraja_history_years(database: &Connection) -> Result<Vec<i32>> {
+    let mut statement = database.prepare(
+        "SELECT DISTINCT CAST(strftime('%Y', date, 'unixepoch', 'localtime') AS INTEGER) AS year \
+         FROM scoredatalog WHERE date > 0 ORDER BY year DESC",
+    )?;
+    let years = statement.query_map([], |row| row.get::<_, Option<i32>>(0))?;
+    Ok(years
+        .filter_map(std::result::Result::ok)
+        .flatten()
+        .filter(|year| (2000..=2100).contains(year))
+        .collect())
+}
+
 async fn apply_stellaverse_name(player: &mut PlayerData, enabled: bool, state: &AppState) {
     if !enabled || player.profile.lr2_id.is_empty() {
         return;
@@ -370,6 +634,19 @@ async fn apply_stellaverse_name(player: &mut PlayerData, enabled: bool, state: &
 }
 
 fn load_player_data(
+    score_path: &Path,
+    song_path: &Path,
+    mode: &str,
+    skill_mode: &str,
+    game_data_mode: &str,
+) -> Result<PlayerData> {
+    match game_data_mode {
+        "beatoraja" => load_beatoraja_player_data(score_path, song_path, mode),
+        _ => load_lr2_player_data(score_path, song_path, mode, skill_mode),
+    }
+}
+
+fn load_lr2_player_data(
     score_path: &Path,
     song_path: &Path,
     mode: &str,
@@ -389,6 +666,7 @@ fn load_player_data(
 
     let mut entries = Vec::new();
     let mut by_hash = HashMap::new();
+    let mut random_layout_cache: HashMap<(String, i64, i64), String> = HashMap::new();
     for row in &score_rows {
         let md5 = valid_hex(get_text(row, "hash"), 32);
         if md5.is_empty() || by_hash.contains_key(&md5) {
@@ -423,11 +701,21 @@ fn load_player_data(
         } else {
             (None, None, None, None)
         };
-        let info = song_catalog.1.get(&md5).cloned().unwrap_or_default();
+        let info = song_catalog.by_md5.get(&md5).cloned().unwrap_or_default();
+        let option_code = get_i64(row, "op_best");
+        let random_seed = get_i64(row, "rseed");
+        let option_info = lr2_score_option_info(
+            &md5,
+            play_count,
+            option_code,
+            random_seed,
+            info.key_mode,
+            &mut random_layout_cache,
+        );
         let entry = ScoreEntry {
             md5: md5.clone(),
-            title: info.0,
-            artist: info.1,
+            title: info.title,
+            artist: info.artist,
             lamp_status: lamp_status(get_i64(row, "clear"), play_count),
             play_count,
             ex_score,
@@ -437,6 +725,11 @@ fn load_player_data(
             bad_count: bad,
             poor_count: poor,
             miss_count,
+            play_option: option_info.play_option,
+            option_code,
+            random_seed,
+            random_layout: option_info.random_layout,
+            key_mode: info.key_mode,
         };
         by_hash.insert(md5, entry.clone());
         entries.push(entry);
@@ -466,6 +759,7 @@ fn load_player_data(
         } else {
             String::new()
         },
+        game_data_mode: "lr2".into(),
         score_db_mode: mode.to_string(),
         profile: Profile {
             player_id,
@@ -482,8 +776,128 @@ fn load_player_data(
         },
         entries,
         by_hash,
-        local_song_hashes: song_catalog.0,
-        has_song_catalog: song_catalog.2,
+        local_song_hashes: song_catalog.md5_hashes,
+        has_song_catalog: song_catalog.loaded,
+    })
+}
+
+fn load_beatoraja_player_data(
+    score_path: &Path,
+    song_path: &Path,
+    mode: &str,
+) -> Result<PlayerData> {
+    if !score_path.is_file() {
+        return Err(message("指定された beatoraja score.db が見つかりません。"));
+    }
+    if !song_path.is_file() {
+        return Err(message(
+            "指定された beatoraja songdata.db が見つかりません。",
+        ));
+    }
+
+    let database = open_readonly(score_path)?;
+    if !table_has_column(&database, "score", "sha256") {
+        return Err(message(
+            "選択したscore.dbはbeatoraja形式ではありません。ゲームモードかDBパスを確認してください。",
+        ));
+    }
+    let player_row = query_json_rows(&database, "SELECT * FROM player ORDER BY date DESC LIMIT 1")?
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| json!({}));
+    let score_rows = query_json_rows(&database, "SELECT * FROM score WHERE mode = 0")?;
+    let song_catalog = load_beatoraja_song_catalog(song_path)?;
+
+    let mut by_hash = HashMap::new();
+    let mut random_layout_cache: HashMap<(String, i64, i64), String> = HashMap::new();
+    for row in &score_rows {
+        let sha256 = valid_hex(get_text(row, "sha256"), 64);
+        let Some(info) = song_catalog.by_sha256.get(&sha256) else {
+            continue;
+        };
+        if info.md5.is_empty() {
+            continue;
+        }
+
+        let play_count = get_i64(row, "playcount");
+        let perfect = sum_present(get_i64(row, "epg"), get_i64(row, "lpg"));
+        let great = sum_present(get_i64(row, "egr"), get_i64(row, "lgr"));
+        let total_notes = get_i64(row, "notes");
+        let bad = sum_present(get_i64(row, "ebd"), get_i64(row, "lbd"));
+        let poor = sum_present(get_i64(row, "epr"), get_i64(row, "lpr"));
+        let miss_count = if play_count.unwrap_or(0) > 0 {
+            get_i64(row, "minbp").or_else(|| sum_options(bad, poor))
+        } else {
+            None
+        };
+        let (ex_score, max_ex_score, score_rate, max_offset) =
+            score_values(perfect, great, total_notes, play_count);
+        let option_code = get_i64(row, "option");
+        let random_seed = get_i64(row, "seed");
+        let option_info = beatoraja_score_option_info(
+            &sha256,
+            play_count,
+            option_code,
+            random_seed,
+            info.key_mode,
+            &mut random_layout_cache,
+        );
+        let entry = ScoreEntry {
+            md5: info.md5.clone(),
+            title: info.title.clone(),
+            artist: info.artist.clone(),
+            lamp_status: beatoraja_lamp_status(get_i64(row, "clear"), play_count),
+            play_count,
+            ex_score,
+            max_ex_score,
+            score_rate,
+            max_offset,
+            bad_count: bad,
+            poor_count: poor,
+            miss_count,
+            play_option: option_info.play_option,
+            option_code,
+            random_seed,
+            random_layout: option_info.random_layout,
+            key_mode: info.key_mode,
+        };
+
+        let should_replace = by_hash.get(&info.md5).is_none_or(|current: &ScoreEntry| {
+            entry.ex_score.unwrap_or(-1) > current.ex_score.unwrap_or(-1)
+                || (entry.ex_score == current.ex_score
+                    && beatoraja_lamp_rank(&entry.lamp_status)
+                        < beatoraja_lamp_rank(&current.lamp_status))
+        });
+        if should_replace {
+            by_hash.insert(info.md5.clone(), entry);
+        }
+    }
+    let mut entries: Vec<ScoreEntry> = by_hash.values().cloned().collect();
+    entries.sort_by(|left, right| left.md5.cmp(&right.md5));
+
+    let profile_name = beatoraja_profile_name(score_path);
+    Ok(PlayerData {
+        score_db_path: score_path.to_string_lossy().into_owned(),
+        song_db_path: song_path.to_string_lossy().into_owned(),
+        game_data_mode: "beatoraja".into(),
+        score_db_mode: mode.to_string(),
+        profile: Profile {
+            player_id: profile_name.clone(),
+            name: profile_name,
+            lr2_id: String::new(),
+            grade: String::new(),
+            grade_sp: String::new(),
+            grade_dp: String::new(),
+            skill_analyzer: Value::Null,
+            overjoy_triple_crown: false,
+            force_dan_candidate: None,
+            hit_totals: beatoraja_hit_totals(&player_row),
+            play_time_total: play_time_total(&player_row),
+        },
+        entries,
+        by_hash,
+        local_song_hashes: song_catalog.md5_hashes,
+        has_song_catalog: true,
     })
 }
 
@@ -492,6 +906,7 @@ fn profile_json(player: &PlayerData) -> Value {
         "player": {
             "id": player.profile.player_id,
             "sourceType": "local-score-db",
+            "gameDataMode": player.game_data_mode,
             "name": player.profile.name,
             "lr2Id": player.profile.lr2_id,
             "grade": player.profile.grade,
@@ -526,6 +941,44 @@ fn query_json_rows(connection: &Connection, sql: &str) -> Result<Vec<Value>> {
     Ok(rows.filter_map(std::result::Result::ok).collect())
 }
 
+fn query_json_rows_between(
+    connection: &Connection,
+    sql: &str,
+    start: i64,
+    end: i64,
+) -> Result<Vec<Value>> {
+    let mut statement = connection.prepare(sql)?;
+    let names: Vec<String> = statement
+        .column_names()
+        .iter()
+        .map(|name| (*name).to_string())
+        .collect();
+    let rows = statement.query_map(params![start, end], |row| Ok(row_to_json(row, &names)))?;
+    Ok(rows.filter_map(std::result::Result::ok).collect())
+}
+
+fn table_has_column(connection: &Connection, table: &str, column: &str) -> bool {
+    let Ok(mut statement) = connection.prepare(&format!("PRAGMA table_info({table})")) else {
+        return false;
+    };
+    let Ok(rows) = statement.query_map([], |row| row.get::<_, String>(1)) else {
+        return false;
+    };
+    rows.filter_map(std::result::Result::ok)
+        .any(|name| name.eq_ignore_ascii_case(column))
+}
+
+fn table_has_primary_key(connection: &Connection, table: &str) -> bool {
+    let Ok(mut statement) = connection.prepare(&format!("PRAGMA table_info({table})")) else {
+        return false;
+    };
+    let Ok(rows) = statement.query_map([], |row| row.get::<_, i64>(5)) else {
+        return false;
+    };
+    rows.filter_map(std::result::Result::ok)
+        .any(|primary_key_order| primary_key_order > 0)
+}
+
 fn row_to_json(row: &Row<'_>, names: &[String]) -> Value {
     let mut object = Map::new();
     for (index, name) in names.iter().enumerate() {
@@ -545,39 +998,357 @@ fn row_to_json(row: &Row<'_>, names: &[String]) -> Value {
     Value::Object(object)
 }
 
-fn load_song_catalog(path: &Path) -> (HashSet<String>, HashMap<String, (String, String)>, bool) {
+#[derive(Debug, Default)]
+struct Lr2ScoreOptionInfo {
+    play_option: Option<String>,
+    random_layout: Option<String>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct DecodedLr2Option {
+    label: String,
+    player_one_random: u8,
+}
+
+fn lr2_score_option_info(
+    md5: &str,
+    play_count: Option<i64>,
+    option_code: Option<i64>,
+    random_seed: Option<i64>,
+    key_mode: Option<i64>,
+    layout_cache: &mut HashMap<(String, i64, i64), String>,
+) -> Lr2ScoreOptionInfo {
+    if play_count.unwrap_or(0) <= 0 {
+        return Lr2ScoreOptionInfo::default();
+    }
+
+    let Some(option_code) = option_code else {
+        return Lr2ScoreOptionInfo {
+            play_option: Some("UNKNOWN".into()),
+            random_layout: None,
+        };
+    };
+    let Some(decoded) = decode_lr2_option(option_code, key_mode) else {
+        return Lr2ScoreOptionInfo {
+            play_option: Some("UNKNOWN".into()),
+            random_layout: None,
+        };
+    };
+
+    let random_layout = if key_mode == Some(7) && decoded.player_one_random == 2 {
+        match random_seed.and_then(|seed| i32::try_from(seed).ok()) {
+            Some(seed) => {
+                let cache_key = (md5.to_string(), option_code, i64::from(seed));
+                Some(
+                    layout_cache
+                        .entry(cache_key)
+                        .or_insert_with(|| random_layout_for_display_7k(seed))
+                        .clone(),
+                )
+            }
+            None => Some("UNKNOWN".into()),
+        }
+    } else {
+        None
+    };
+
+    Lr2ScoreOptionInfo {
+        play_option: Some(decoded.label),
+        random_layout,
+    }
+}
+
+fn decode_lr2_option(option_code: i64, key_mode: Option<i64>) -> Option<DecodedLr2Option> {
+    if !(0..=9_999).contains(&option_code) {
+        return None;
+    }
+
+    let gauge = (option_code % 10) as u8;
+    let player_one_random = ((option_code / 10) % 10) as u8;
+    let player_two_random = ((option_code / 100) % 10) as u8;
+    let dp_flip = ((option_code / 1_000) % 10) as u8;
+    if gauge > 5 || player_one_random > 5 || player_two_random > 5 || dp_flip > 1 {
+        return None;
+    }
+
+    let is_double_play = key_mode.is_some_and(|mode| mode >= 10);
+    if !is_double_play && (player_two_random != 0 || dp_flip != 0) {
+        return None;
+    }
+
+    let mut labels = Vec::new();
+    if is_double_play {
+        if player_one_random != 0 {
+            labels.push(format!("1P {}", lr2_random_label(player_one_random)?));
+        }
+        if player_two_random != 0 {
+            labels.push(format!("2P {}", lr2_random_label(player_two_random)?));
+        }
+        if dp_flip != 0 {
+            labels.push("FLIP".into());
+        }
+    } else if player_one_random != 0 {
+        labels.push(lr2_random_label(player_one_random)?.into());
+    }
+
+    if gauge != 0 {
+        labels.push(lr2_gauge_label(gauge)?.into());
+    }
+    if labels.is_empty() {
+        labels.push("NONE".into());
+    }
+
+    Some(DecodedLr2Option {
+        label: labels.join(" / "),
+        player_one_random,
+    })
+}
+
+fn lr2_random_label(value: u8) -> Option<&'static str> {
+    match value {
+        1 => Some("MIRROR"),
+        2 => Some("RANDOM"),
+        3 => Some("S-RANDOM"),
+        4 => Some("H-RANDOM"),
+        5 => Some("ALL-SCRATCH"),
+        _ => None,
+    }
+}
+
+fn lr2_gauge_label(value: u8) -> Option<&'static str> {
+    match value {
+        1 => Some("HARD"),
+        2 => Some("DEATH"),
+        3 => Some("EASY"),
+        4 => Some("P-ATTACK"),
+        5 => Some("G-ATTACK"),
+        _ => None,
+    }
+}
+
+#[derive(Debug, Default)]
+struct BeatorajaScoreOptionInfo {
+    play_option: Option<String>,
+    random_layout: Option<String>,
+}
+
+fn beatoraja_score_option_info(
+    sha256: &str,
+    play_count: Option<i64>,
+    option_code: Option<i64>,
+    random_seed: Option<i64>,
+    key_mode: Option<i64>,
+    layout_cache: &mut HashMap<(String, i64, i64), String>,
+) -> BeatorajaScoreOptionInfo {
+    if play_count.unwrap_or(0) <= 0 {
+        return BeatorajaScoreOptionInfo::default();
+    }
+
+    let Some(option_code) = option_code else {
+        return BeatorajaScoreOptionInfo {
+            play_option: Some("UNKNOWN".into()),
+            random_layout: None,
+        };
+    };
+    let Some((label, player_one_random)) = decode_beatoraja_option(option_code, key_mode) else {
+        return BeatorajaScoreOptionInfo {
+            play_option: Some("UNKNOWN".into()),
+            random_layout: None,
+        };
+    };
+
+    let random_layout_generator: Option<fn(i64) -> String> = match (key_mode, player_one_random) {
+        (Some(7), 2) => Some(beatoraja_random_layout_for_display_7k),
+        (Some(7), 3) => Some(beatoraja_r_random_layout_for_display_7k),
+        _ => None,
+    };
+    let random_layout = if let Some(generate_layout) = random_layout_generator {
+        match random_seed {
+            Some(seed) if seed >= 0 => {
+                let cache_key = (sha256.to_string(), option_code, seed);
+                Some(
+                    layout_cache
+                        .entry(cache_key)
+                        .or_insert_with(|| generate_layout(seed))
+                        .clone(),
+                )
+            }
+            _ => Some("UNKNOWN".into()),
+        }
+    } else {
+        None
+    };
+
+    BeatorajaScoreOptionInfo {
+        play_option: Some(label),
+        random_layout,
+    }
+}
+
+fn decode_beatoraja_option(option_code: i64, key_mode: Option<i64>) -> Option<(String, u8)> {
+    if option_code < 0 {
+        return None;
+    }
+
+    let is_double_play = key_mode.is_some_and(|mode| mode >= 10);
+    if !is_double_play {
+        let option = u8::try_from(option_code).ok()?;
+        return Some((beatoraja_random_label(option)?.into(), option));
+    }
+
+    if option_code > 399 {
+        return None;
+    }
+    let player_one = (option_code % 10) as u8;
+    let player_two = ((option_code / 10) % 10) as u8;
+    let double_option = ((option_code / 100) % 10) as u8;
+    let mut labels = Vec::new();
+    if player_one != 0 {
+        labels.push(format!("1P {}", beatoraja_random_label(player_one)?));
+    }
+    if player_two != 0 {
+        labels.push(format!("2P {}", beatoraja_random_label(player_two)?));
+    }
+    match double_option {
+        0 => {}
+        1 => labels.push("FLIP".into()),
+        2 => labels.push("BATTLE".into()),
+        3 => labels.push("BATTLE-A".into()),
+        _ => return None,
+    }
+    if labels.is_empty() {
+        labels.push("NONE".into());
+    }
+    Some((labels.join(" / "), player_one))
+}
+
+fn beatoraja_random_label(value: u8) -> Option<&'static str> {
+    match value {
+        0 => Some("NONE"),
+        1 => Some("MIRROR"),
+        2 => Some("RANDOM"),
+        3 => Some("R-RANDOM"),
+        4 => Some("S-RANDOM"),
+        5 => Some("SPIRAL"),
+        6 => Some("H-RANDOM"),
+        7 => Some("ALL-SCRATCH"),
+        8 => Some("EX-RANDOM"),
+        9 => Some("EX-S-RANDOM"),
+        _ => None,
+    }
+}
+
+fn load_song_catalog(path: &Path) -> Lr2SongCatalog {
     if !path.is_file() {
-        return (HashSet::new(), HashMap::new(), false);
+        return Lr2SongCatalog::default();
     }
     let Ok(database) = open_readonly(path) else {
-        return (HashSet::new(), HashMap::new(), false);
+        return Lr2SongCatalog::default();
     };
-    let Ok(rows) = query_json_rows(&database, "SELECT hash, title, subtitle, artist FROM song")
-    else {
-        return (HashSet::new(), HashMap::new(), false);
+    let key_mode_column = lr2_song_key_mode_column(&database);
+    let Ok(rows) = query_json_rows(
+        &database,
+        &format!("SELECT hash, title, subtitle, artist, {key_mode_column} FROM song"),
+    ) else {
+        return Lr2SongCatalog::default();
     };
-    let mut hashes = HashSet::new();
-    let mut info = HashMap::new();
+    let mut catalog = Lr2SongCatalog {
+        loaded: true,
+        ..Lr2SongCatalog::default()
+    };
     for row in rows {
         let md5 = valid_hex(get_text(&row, "hash"), 32);
         if md5.is_empty() {
             continue;
         }
-        hashes.insert(md5.clone());
+        catalog.md5_hashes.insert(md5.clone());
         let title = format!("{}{}", get_text(&row, "title"), get_text(&row, "subtitle"))
             .trim()
             .to_string();
-        info.entry(md5).or_insert((title, get_text(&row, "artist")));
+        catalog.by_md5.entry(md5.clone()).or_insert(SongInfo {
+            md5,
+            title,
+            artist: get_text(&row, "artist"),
+            key_mode: get_i64(&row, "keymode"),
+        });
     }
-    (hashes, info, true)
+    catalog
 }
 
-fn resolve_song_db_path(score_path: &str, explicit: &str) -> PathBuf {
+fn lr2_song_key_mode_column(database: &Connection) -> &'static str {
+    if table_has_column(database, "song", "keymode") {
+        "keymode"
+    } else if table_has_column(database, "song", "mode") {
+        "mode AS keymode"
+    } else {
+        "NULL AS keymode"
+    }
+}
+
+fn load_beatoraja_song_catalog(path: &Path) -> Result<BeatorajaSongCatalog> {
+    let database = open_readonly(path)?;
+    if !table_has_column(&database, "song", "sha256") || !table_has_column(&database, "song", "md5")
+    {
+        return Err(message(
+            "選択した楽曲DBはbeatorajaのsongdata.db形式ではありません。",
+        ));
+    }
+
+    let mut statement = database.prepare(
+        "SELECT md5, sha256, title, subtitle, artist, mode FROM song \
+         WHERE length(md5) = 32 AND length(sha256) = 64",
+    )?;
+    let rows = statement.query_map([], |row| {
+        let md5: String = row.get(0)?;
+        let sha256: String = row.get(1)?;
+        let title: Option<String> = row.get(2)?;
+        let subtitle: Option<String> = row.get(3)?;
+        let artist: Option<String> = row.get(4)?;
+        let mode: Option<i64> = row.get(5)?;
+        Ok((md5, sha256, title, subtitle, artist, mode))
+    })?;
+
+    let mut catalog = BeatorajaSongCatalog::default();
+    for row in rows.filter_map(std::result::Result::ok) {
+        let md5 = valid_hex(row.0, 32);
+        let sha256 = valid_hex(row.1, 64);
+        if md5.is_empty() || sha256.is_empty() {
+            continue;
+        }
+        let title = format!("{}{}", row.2.unwrap_or_default(), row.3.unwrap_or_default())
+            .trim()
+            .to_string();
+        catalog.md5_hashes.insert(md5.clone());
+        catalog.by_sha256.entry(sha256).or_insert(SongInfo {
+            md5,
+            title,
+            artist: row.4.unwrap_or_default().trim().to_string(),
+            key_mode: row.5,
+        });
+    }
+    Ok(catalog)
+}
+
+fn resolve_song_db_path(score_path: &str, explicit: &str, game_data_mode: &str) -> PathBuf {
     let explicit = clean_path(explicit);
     if !explicit.as_os_str().is_empty() {
         return explicit;
     }
     let score = clean_path(score_path);
+    if game_data_mode == "beatoraja" {
+        for ancestor in score.ancestors().skip(1) {
+            let candidate = ancestor.join("songdata.db");
+            if candidate.is_file() {
+                return candidate;
+            }
+        }
+        return score
+            .parent()
+            .and_then(Path::parent)
+            .and_then(Path::parent)
+            .unwrap_or_else(|| Path::new("."))
+            .join("songdata.db");
+    }
     score
         .parent()
         .and_then(Path::parent)
@@ -587,6 +1358,24 @@ fn resolve_song_db_path(score_path: &str, explicit: &str) -> PathBuf {
 
 fn clean_path(value: &str) -> PathBuf {
     PathBuf::from(value.trim().trim_matches(['"', '\'']))
+}
+
+fn normalize_game_data_mode(value: &str, score_path: &Path) -> String {
+    match value.trim().to_ascii_lowercase().replace('_', "-").as_str() {
+        "beatoraja" | "oraja" => "beatoraja".into(),
+        "lr2" => "lr2".into(),
+        _ => {
+            if score_path.is_file()
+                && open_readonly(score_path)
+                    .ok()
+                    .is_some_and(|database| table_has_column(&database, "score", "sha256"))
+            {
+                "beatoraja".into()
+            } else {
+                "lr2".into()
+            }
+        }
+    }
 }
 
 fn normalize_score_db_mode(value: &str, score_path: &Path) -> String {
@@ -653,6 +1442,37 @@ fn sum_options(left: Option<i64>, right: Option<i64>) -> Option<i64> {
     Some(left? + right?)
 }
 
+fn sum_present(left: Option<i64>, right: Option<i64>) -> Option<i64> {
+    match (left, right) {
+        (None, None) => None,
+        (left, right) => Some(left.unwrap_or(0) + right.unwrap_or(0)),
+    }
+}
+
+fn score_values(
+    perfect: Option<i64>,
+    great: Option<i64>,
+    total_notes: Option<i64>,
+    play_count: Option<i64>,
+) -> (Option<i64>, Option<i64>, Option<f64>, Option<i64>) {
+    if play_count.unwrap_or(0) <= 0 {
+        return (None, None, None, None);
+    }
+    match (perfect, great, total_notes) {
+        (Some(perfect), Some(great), Some(notes)) if notes > 0 => {
+            let ex = perfect * 2 + great;
+            let max = notes * 2;
+            (
+                Some(ex),
+                Some(max),
+                Some(round2(ex as f64 / max as f64 * 100.0)),
+                Some(max.saturating_sub(ex)),
+            )
+        }
+        _ => (None, None, None, None),
+    }
+}
+
 fn lamp_status(clear: Option<i64>, play_count: Option<i64>) -> String {
     match clear.unwrap_or(-1) {
         5 => "FULL COMBO",
@@ -665,6 +1485,66 @@ fn lamp_status(clear: Option<i64>, play_count: Option<i64>) -> String {
         _ => "NO PLAY",
     }
     .into()
+}
+
+fn beatoraja_lamp_status(clear: Option<i64>, play_count: Option<i64>) -> String {
+    match clear.unwrap_or(-1) {
+        10 => "MAX",
+        9 => "PERFECT",
+        8 => "FULL COMBO",
+        7 => "EX HARD CLEAR",
+        6 => "HARD CLEAR",
+        5 => "CLEAR",
+        4 => "EASY CLEAR",
+        2 | 3 => "ASSIST",
+        1 => "FAILED",
+        0 => "NO PLAY",
+        _ if play_count.unwrap_or(0) > 0 => "FAILED",
+        _ => "NO PLAY",
+    }
+    .into()
+}
+
+fn beatoraja_lamp_rank(lamp: &str) -> usize {
+    match lamp {
+        "MAX" => 0,
+        "PERFECT" => 1,
+        "FULL COMBO" => 2,
+        "EX HARD CLEAR" => 3,
+        "HARD CLEAR" => 4,
+        "CLEAR" => 5,
+        "EASY CLEAR" => 6,
+        "ASSIST" => 7,
+        "FAILED" => 8,
+        "NO PLAY" => 9,
+        _ => 10,
+    }
+}
+
+fn beatoraja_profile_name(score_path: &Path) -> String {
+    let parent = score_path.parent();
+    let parent_name = parent
+        .and_then(Path::file_name)
+        .and_then(|value| value.to_str())
+        .unwrap_or_default();
+    let looks_like_snapshot = parent_name.len() == 8
+        && parent_name
+            .chars()
+            .all(|character| character.is_ascii_digit());
+    let candidate = if looks_like_snapshot {
+        parent.and_then(Path::parent)
+    } else {
+        parent
+    };
+    candidate
+        .and_then(Path::file_name)
+        .and_then(|value| value.to_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("beatoraja player")
+        .chars()
+        .take(64)
+        .collect()
 }
 
 fn format_grade(value: Option<i64>) -> String {
@@ -1082,6 +1962,24 @@ fn hit_totals(row: &Value) -> Value {
     json!({ "perfect": perfect, "great": great, "good": good, "bad": bad, "poor": 0, "poorRaw": poor_raw, "poorMode": "excluded", "total": perfect + great + good + bad })
 }
 
+fn beatoraja_hit_totals(row: &Value) -> Value {
+    let perfect = get_i64(row, "epg").unwrap_or(0) + get_i64(row, "lpg").unwrap_or(0);
+    let great = get_i64(row, "egr").unwrap_or(0) + get_i64(row, "lgr").unwrap_or(0);
+    let good = get_i64(row, "egd").unwrap_or(0) + get_i64(row, "lgd").unwrap_or(0);
+    let bad = get_i64(row, "ebd").unwrap_or(0) + get_i64(row, "lbd").unwrap_or(0);
+    let poor_raw = get_i64(row, "epr").unwrap_or(0) + get_i64(row, "lpr").unwrap_or(0);
+    json!({
+        "perfect": perfect,
+        "great": great,
+        "good": good,
+        "bad": bad,
+        "poor": 0,
+        "poorRaw": poor_raw,
+        "poorMode": "excluded",
+        "total": perfect + great + good + bad,
+    })
+}
+
 fn play_time_total(row: &Value) -> Value {
     let candidates = [
         "playtime",
@@ -1140,6 +2038,7 @@ fn build_force_rating(player: &PlayerData) -> Value {
                 | "HARD CLEAR"
                 | "CLEAR"
                 | "EASY CLEAR"
+                | "ASSIST"
                 | "FAILED"
         ) {
             continue;
@@ -1419,6 +2318,41 @@ fn enrich_table(mut table: Value, player: &PlayerData, rival: &RivalData) -> Val
                 object.insert(key.into(), value);
             }
             object.insert(
+                "playOption".into(),
+                score
+                    .and_then(|entry| entry.play_option.clone())
+                    .map(Value::String)
+                    .unwrap_or(Value::Null),
+            );
+            object.insert(
+                "optionCode".into(),
+                score
+                    .and_then(|entry| entry.option_code)
+                    .map(Value::from)
+                    .unwrap_or(Value::Null),
+            );
+            object.insert(
+                "randomSeed".into(),
+                score
+                    .and_then(|entry| entry.random_seed)
+                    .map(Value::from)
+                    .unwrap_or(Value::Null),
+            );
+            object.insert(
+                "randomLayout".into(),
+                score
+                    .and_then(|entry| entry.random_layout.clone())
+                    .map(Value::String)
+                    .unwrap_or(Value::Null),
+            );
+            object.insert(
+                "keyMode".into(),
+                score
+                    .and_then(|entry| entry.key_mode)
+                    .map(Value::from)
+                    .unwrap_or(Value::Null),
+            );
+            object.insert(
                 "rivalComparison".into(),
                 rival_comparison(&md5, score, rival),
             );
@@ -1463,10 +2397,14 @@ fn rival_comparison(md5: &str, score: Option<&ScoreEntry>, rival: &RivalData) ->
 fn count_lamps(charts: &[Value]) -> Value {
     let mut counts = Map::new();
     for status in [
+        "MAX",
+        "PERFECT",
         "FULL COMBO",
+        "EX HARD CLEAR",
         "HARD CLEAR",
         "CLEAR",
         "EASY CLEAR",
+        "ASSIST",
         "FAILED",
         "NO PLAY",
         "NO SONG",
@@ -1510,7 +2448,16 @@ fn clear_count(charts: &[Value]) -> usize {
         .filter(|chart| {
             matches!(
                 chart.get("lampStatus").and_then(Value::as_str),
-                Some("FULL COMBO" | "HARD CLEAR" | "CLEAR" | "EASY CLEAR")
+                Some(
+                    "MAX"
+                        | "PERFECT"
+                        | "FULL COMBO"
+                        | "EX HARD CLEAR"
+                        | "HARD CLEAR"
+                        | "CLEAR"
+                        | "EASY CLEAR"
+                        | "ASSIST"
+                )
             )
         })
         .count()
@@ -1587,7 +2534,35 @@ fn build_unlisted(player: &PlayerData, tables: &[Value]) -> Vec<Value> {
         .map(|chart| get_text(chart, "md5").to_ascii_lowercase())
         .filter(|hash| !hash.is_empty())
         .collect();
-    player.entries.iter().filter(|entry| !listed.contains(&entry.md5)).map(|entry| json!({ "key": format!("unlisted:{}", entry.md5), "md5": entry.md5, "title": entry.title, "artist": entry.artist, "level": "", "lampStatus": entry.lamp_status, "playCount": entry.play_count, "exScore": entry.ex_score, "maxExScore": entry.max_ex_score, "scoreRate": entry.score_rate, "maxOffset": entry.max_offset, "badCount": entry.bad_count, "poorCount": entry.poor_count, "missCount": entry.miss_count, "isUnlisted": true })).collect()
+    player
+        .entries
+        .iter()
+        .filter(|entry| !listed.contains(&entry.md5))
+        .map(|entry| {
+            json!({
+                "key": format!("unlisted:{}", entry.md5),
+                "md5": entry.md5,
+                "title": entry.title,
+                "artist": entry.artist,
+                "level": "",
+                "lampStatus": entry.lamp_status,
+                "playCount": entry.play_count,
+                "exScore": entry.ex_score,
+                "maxExScore": entry.max_ex_score,
+                "scoreRate": entry.score_rate,
+                "maxOffset": entry.max_offset,
+                "badCount": entry.bad_count,
+                "poorCount": entry.poor_count,
+                "missCount": entry.miss_count,
+                "playOption": entry.play_option,
+                "optionCode": entry.option_code,
+                "randomSeed": entry.random_seed,
+                "randomLayout": entry.random_layout,
+                "keyMode": entry.key_mode,
+                "isUnlisted": true,
+            })
+        })
+        .collect()
 }
 
 fn sync_file_state(path: &str) -> Value {
@@ -1637,5 +2612,276 @@ mod tests {
     fn clear_zero_stays_no_play_even_when_play_count_exists() {
         assert_eq!(lamp_status(Some(0), Some(3)), "NO PLAY");
         assert_eq!(lamp_status(Some(1), Some(3)), "FAILED");
+    }
+
+    #[test]
+    fn beatoraja_clear_types_follow_clear_type_ids() {
+        let expected = [
+            (0, "NO PLAY"),
+            (1, "FAILED"),
+            (2, "ASSIST"),
+            (3, "ASSIST"),
+            (4, "EASY CLEAR"),
+            (5, "CLEAR"),
+            (6, "HARD CLEAR"),
+            (7, "EX HARD CLEAR"),
+            (8, "FULL COMBO"),
+            (9, "PERFECT"),
+            (10, "MAX"),
+        ];
+        for (clear, lamp) in expected {
+            assert_eq!(beatoraja_lamp_status(Some(clear), Some(1)), lamp);
+        }
+    }
+
+    #[test]
+    fn beatoraja_score_combines_early_and_late_judges() {
+        let (ex, max, rate, offset) = score_values(Some(900), Some(80), Some(1_000), Some(1));
+        assert_eq!(ex, Some(1_880));
+        assert_eq!(max, Some(2_000));
+        assert_eq!(rate, Some(94.0));
+        assert_eq!(offset, Some(120));
+    }
+
+    #[test]
+    fn beatoraja_option_ids_follow_the_official_random_enum() {
+        assert_eq!(
+            decode_beatoraja_option(0, Some(7)),
+            Some(("NONE".into(), 0))
+        );
+        assert_eq!(
+            decode_beatoraja_option(1, Some(7)),
+            Some(("MIRROR".into(), 1))
+        );
+        assert_eq!(
+            decode_beatoraja_option(2, Some(7)),
+            Some(("RANDOM".into(), 2))
+        );
+        assert_eq!(
+            decode_beatoraja_option(3, Some(7)),
+            Some(("R-RANDOM".into(), 3))
+        );
+        assert_eq!(
+            decode_beatoraja_option(4, Some(7)),
+            Some(("S-RANDOM".into(), 4))
+        );
+        assert_eq!(
+            decode_beatoraja_option(6, Some(7)),
+            Some(("H-RANDOM".into(), 6))
+        );
+        assert_eq!(
+            decode_beatoraja_option(121, Some(14)),
+            Some(("1P MIRROR / 2P RANDOM / FLIP".into(), 1))
+        );
+    }
+
+    #[test]
+    fn beatoraja_random_layout_uses_java_seed_only_for_supported_sp_7key_options() {
+        let mut cache = HashMap::new();
+        let random = beatoraja_score_option_info(
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            Some(1),
+            Some(2),
+            Some(8_005_733),
+            Some(7),
+            &mut cache,
+        );
+        assert_eq!(random.play_option.as_deref(), Some("RANDOM"));
+        assert_eq!(random.random_layout.as_deref(), Some("4153726"));
+
+        let rotate = beatoraja_score_option_info(
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            Some(1),
+            Some(3),
+            Some(8_005_733),
+            Some(7),
+            &mut cache,
+        );
+        assert_eq!(rotate.play_option.as_deref(), Some("R-RANDOM"));
+        assert_eq!(rotate.random_layout.as_deref(), Some("1765432"));
+
+        for (option, key_mode) in [(1, Some(7)), (4, Some(7)), (2, Some(14)), (3, Some(14))] {
+            let other = beatoraja_score_option_info(
+                "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+                Some(1),
+                Some(option),
+                Some(8_005_733),
+                key_mode,
+                &mut cache,
+            );
+            assert_eq!(other.random_layout, None);
+        }
+    }
+
+    #[test]
+    fn beatoraja_missing_random_seed_is_non_fatal() {
+        let mut cache = HashMap::new();
+        let result = beatoraja_score_option_info(
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            Some(1),
+            Some(2),
+            None,
+            Some(7),
+            &mut cache,
+        );
+        assert_eq!(result.play_option.as_deref(), Some("RANDOM"));
+        assert_eq!(result.random_layout.as_deref(), Some("UNKNOWN"));
+
+        let rotate = beatoraja_score_option_info(
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            Some(1),
+            Some(3),
+            None,
+            Some(7),
+            &mut cache,
+        );
+        assert_eq!(rotate.play_option.as_deref(), Some("R-RANDOM"));
+        assert_eq!(rotate.random_layout.as_deref(), Some("UNKNOWN"));
+    }
+
+    #[test]
+    fn lr2_option_code_decodes_random_and_gauge() {
+        assert_eq!(
+            decode_lr2_option(21, Some(7)).unwrap(),
+            DecodedLr2Option {
+                label: "RANDOM / HARD".into(),
+                player_one_random: 2,
+            }
+        );
+        assert_eq!(decode_lr2_option(10, Some(7)).unwrap().label, "MIRROR");
+        assert_eq!(decode_lr2_option(0, Some(7)).unwrap().label, "NONE");
+        assert_eq!(
+            decode_lr2_option(1_211, Some(14)).unwrap().label,
+            "1P MIRROR / 2P RANDOM / FLIP / HARD"
+        );
+    }
+
+    #[test]
+    fn random_layout_is_limited_to_normal_random_sp_7key() {
+        let mut cache = HashMap::new();
+        let random = lr2_score_option_info(
+            "0123456789abcdef0123456789abcdef",
+            Some(1),
+            Some(20),
+            Some(12_183),
+            Some(7),
+            &mut cache,
+        );
+        assert_eq!(random.play_option.as_deref(), Some("RANDOM"));
+        assert_eq!(random.random_layout.as_deref(), Some("1743265"));
+
+        for (option, key_mode) in [(10, Some(7)), (30, Some(7)), (20, Some(14))] {
+            let other = lr2_score_option_info(
+                "0123456789abcdef0123456789abcdef",
+                Some(1),
+                Some(option),
+                Some(12_183),
+                key_mode,
+                &mut cache,
+            );
+            assert_eq!(other.random_layout, None);
+        }
+    }
+
+    #[test]
+    fn invalid_random_seed_is_reported_without_failing() {
+        let mut cache = HashMap::new();
+        let result = lr2_score_option_info(
+            "0123456789abcdef0123456789abcdef",
+            Some(1),
+            Some(20),
+            Some(i64::MAX),
+            Some(7),
+            &mut cache,
+        );
+        assert_eq!(result.random_layout.as_deref(), Some("UNKNOWN"));
+    }
+
+    #[test]
+    fn lr2_song_catalog_accepts_openlr2_mode_column() {
+        let database = Connection::open_in_memory().unwrap();
+        database
+            .execute("CREATE TABLE song (hash TEXT, mode INTEGER)", [])
+            .unwrap();
+        assert_eq!(lr2_song_key_mode_column(&database), "mode AS keymode");
+    }
+
+    #[test]
+    fn beatoraja_history_groups_days_and_resolves_rotate_layout() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "l2tv-beatoraja-history-{}-{unique}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let score_path = root.join("score.db");
+        let song_path = root.join("songdata.db");
+        let history_path = root.join("scoredatalog.db");
+        Connection::open(&score_path).unwrap();
+
+        let song_database = Connection::open(&song_path).unwrap();
+        song_database
+            .execute_batch(
+                "CREATE TABLE song (
+                    md5 TEXT, sha256 TEXT, title TEXT, subtitle TEXT, artist TEXT, mode INTEGER
+                );",
+            )
+            .unwrap();
+        let sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        song_database
+            .execute(
+                "INSERT INTO song VALUES (?1, ?2, 'Rotate Song', ' [EX]', 'Artist', 7)",
+                params!["0123456789abcdef0123456789abcdef", sha256],
+            )
+            .unwrap();
+
+        let history_database = Connection::open(&history_path).unwrap();
+        history_database
+            .execute_batch(
+                "CREATE TABLE scoredatalog (
+                    sha256 TEXT, mode INTEGER, clear INTEGER,
+                    epg INTEGER, lpg INTEGER, egr INTEGER, lgr INTEGER,
+                    egd INTEGER, lgd INTEGER, ebd INTEGER, lbd INTEGER,
+                    epr INTEGER, lpr INTEGER, ems INTEGER, lms INTEGER,
+                    notes INTEGER, combo INTEGER, minbp INTEGER,
+                    option INTEGER, seed INTEGER, date INTEGER, state INTEGER
+                );",
+            )
+            .unwrap();
+        let first = Local
+            .with_ymd_and_hms(2026, 2, 3, 20, 15, 0)
+            .single()
+            .unwrap()
+            .timestamp();
+        let second = first + 180;
+        for timestamp in [first, second] {
+            history_database
+                .execute(
+                    "INSERT INTO scoredatalog VALUES (
+                        ?1, 0, 6, 900, 0, 100, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                        1000, 900, 20, 3, 8005733, ?2, 0
+                    )",
+                    params![sha256, timestamp],
+                )
+                .unwrap();
+        }
+
+        let result =
+            load_beatoraja_history(&score_path, &song_path, 2026, Some("2026-02-03")).unwrap();
+        assert_eq!(result["totalPlays"], 2);
+        assert_eq!(result["days"][0]["playCount"], 2);
+        assert_eq!(result["days"][0]["chartCount"], 1);
+        assert_eq!(result["entries"].as_array().unwrap().len(), 2);
+        assert_eq!(result["entries"][0]["title"], "Rotate Song [EX]");
+        assert_eq!(result["entries"][0]["playOption"], "R-RANDOM");
+        assert_eq!(result["entries"][0]["randomLayout"], "1765432");
+        assert_eq!(result["legacyLatestOnly"], false);
+
+        drop(history_database);
+        drop(song_database);
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

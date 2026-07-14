@@ -6,6 +6,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const source = path.join(root, "public");
 const target = path.join(root, "dist", "frontend");
 const skippedFiles = new Set([
+  "assets/7key-layout-guide.png",
   "assets/force-rating-badges.png",
   "assets/force-rank-badges/rank_badges.json",
   "assets/force-rank-badges/rank_badges_sheet.png",

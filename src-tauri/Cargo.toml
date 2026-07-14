@@ -1,6 +1,6 @@
 [package]
 name = "l2tv-tauri"
-version = "2.1.0"
+version = "3.0.0"
 description = "L2TV Tauri 2 edition"
 authors = ["HiLowPsi"]
 edition = "2024"

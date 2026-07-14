@@ -12,13 +12,17 @@ L2TV Tauri 2 Edition uses third-party software and public BMS-related data sourc
 
 Exact Rust package versions are recorded in `src-tauri/Cargo.lock`. Build tooling versions are recorded in `package-lock.json`.
 
+## Compatibility references
+
+- [beatoraja](https://github.com/exch-bms2/beatoraja) (GNU GPL v3) was consulted to verify its public `score.db` option IDs and SP 7KEY lane-shuffle behavior. L2TV contains an independent Rust interoperability implementation and does not bundle beatoraja source code or binaries.
+
 ## External data and services
 
 L2TV can read or refer to:
 
-- Lunatic Rave 2 / OpenLR2 local database files
+- Lunatic Rave 2 / OpenLR2 / beatoraja local database files
 - Public BMS difficulty tables selected by the user
 - LR2IR Archive statistics used to prepare FORCE RATE constants
 - Stellaverse IR public player and score information when enabled by the user
 
-Rights to BMS charts, songs, difficulty tables, IR services and related data belong to their respective creators and operators. L2TV is not an official application of Lunatic Rave 2, OpenLR2, LR2IR Archive, Stellaverse IR or any difficulty-table operator.
+Rights to BMS charts, songs, difficulty tables, IR services and related data belong to their respective creators and operators. L2TV is not an official application of Lunatic Rave 2, OpenLR2, beatoraja, LR2IR Archive, Stellaverse IR or any difficulty-table operator.

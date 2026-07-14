@@ -60,11 +60,25 @@
           <details class="settings-group" open>
             <summary>
               <span>読み込み</span>
-              <small>score.db と song.db</small>
+              <small id="load-database-summary">score.db と song.db</small>
             </summary>
             <div class="settings-group-body">
+            <fieldset class="field game-data-mode-field">
+              <legend>ゲームモード</legend>
+              <div id="game-data-mode-control" class="segmented-control" role="radiogroup" aria-label="ゲームモード">
+                <label class="segmented-option">
+                  <input type="radio" name="gameDataMode" value="lr2" checked />
+                  <span>LR2</span>
+                </label>
+                <label class="segmented-option">
+                  <input type="radio" name="gameDataMode" value="beatoraja" />
+                  <span>beatoraja</span>
+                </label>
+              </div>
+            </fieldset>
+
             <label class="field">
-              <span>LR2 score.db パス</span>
+              <span id="score-db-path-label">LR2 score.db パス</span>
               <div class="path-picker">
                 <input
                   id="score-db-path"
@@ -76,7 +90,7 @@
             </label>
 
             <label class="field">
-              <span>song.db パス</span>
+              <span id="song-db-path-label">song.db パス</span>
               <div class="path-picker">
                 <input
                   id="song-db-path"
@@ -87,7 +101,7 @@
               </div>
             </label>
 
-            <label class="field">
+            <label id="score-db-mode-field" class="field">
               <span>score.db仕様</span>
               <select id="score-db-mode-select" name="scoreDbMode">
                 <option value="auto">自動判別</option>
@@ -97,11 +111,11 @@
               </select>
             </label>
 
-            <label class="checkbox-setting stellaverse-network-consent">
+            <label id="stellaverse-network-consent" class="checkbox-setting stellaverse-network-consent">
               <input id="allow-stellaverse-network" type="checkbox" name="allowStellaverseNetwork" />
               <span>Stellaverse IRへの接続を許可する</span>
             </label>
-            <p class="helper">ONにするとプレイヤーIDをStellaverse IRへ送信し、名前・順位・公開スコアを取得します。DBファイルやローカルスコアは送信しません。</p>
+            <p id="stellaverse-network-helper" class="helper">ONにするとプレイヤーIDをStellaverse IRへ送信し、名前・順位・公開スコアを取得します。DBファイルやローカルスコアは送信しません。</p>
 
             <div class="form-actions">
               <div class="action-row">
@@ -174,7 +188,7 @@
               <small>更新・保存先・データ</small>
             </summary>
             <div class="settings-group-body">
-              <label class="field">
+              <label id="rival-folder-field" class="field">
                 <span>スクショ保存先</span>
                 <div class="path-picker">
                   <input

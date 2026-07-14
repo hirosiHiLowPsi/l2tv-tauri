@@ -10,7 +10,7 @@ body:
     id: version
     attributes:
       label: L2TV version
-      placeholder: 2.1.0 pretest
+      placeholder: 3.0.0
     validations:
       required: true
   - type: input

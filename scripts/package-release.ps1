@@ -4,7 +4,7 @@ $root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $dist = Join-Path $root "dist"
 $stage = Join-Path $dist "release-stage"
 $package = Join-Path $stage "L2TV"
-$archive = Join-Path $dist "L2TV-Tauri2-v2.1.0-pretest-win-x64.7z"
+$archive = Join-Path $dist "L2TV-Tauri-v3.0.0-win-x64.7z"
 $executable = Join-Path $root "src-tauri\target\release\L2TV.exe"
 
 if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {
@@ -25,8 +25,11 @@ if (Test-Path -LiteralPath $archive) {
 
 New-Item -ItemType Directory -Path $package -Force | Out-Null
 Copy-Item -LiteralPath $executable -Destination (Join-Path $package "L2TV.exe")
+Copy-Item -LiteralPath $executable -Destination (Join-Path $package "L2TV-Electron-Data-Exporter.exe")
 Copy-Item -LiteralPath (Join-Path $root "README.md") -Destination $package
 Copy-Item -LiteralPath (Join-Path $root "readme.txt") -Destination $package
+Copy-Item -LiteralPath (Join-Path $root "Electron版データ引継ぎツール.txt") -Destination $package
+Copy-Item -LiteralPath (Join-Path $root "RELEASE_NOTES_3.0.0.md") -Destination $package
 Copy-Item -LiteralPath (Join-Path $root "LICENSE") -Destination $package
 Copy-Item -LiteralPath (Join-Path $root "THIRD_PARTY_NOTICES.md") -Destination $package
 
@@ -54,6 +57,7 @@ $archiveHash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash
 $hashFile = "$archive.sha256.txt"
 @(
     "L2TV.exe  SHA256  $exeHash",
+    "L2TV-Electron-Data-Exporter.exe  SHA256  $exeHash",
     "$(Split-Path -Leaf $archive)  SHA256  $archiveHash"
 ) | Set-Content -LiteralPath $hashFile -Encoding utf8
 
@@ -63,5 +67,6 @@ $hashFile = "$archive.sha256.txt"
     ArchiveSHA256 = $archiveHash
     ExecutableBytes = (Get-Item -LiteralPath $executable).Length
     ExecutableSHA256 = $exeHash
+    ExporterSHA256 = $exeHash
     HashFile = $hashFile
 } | Format-List

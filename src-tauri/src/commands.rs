@@ -5,9 +5,10 @@ use std::path::{Path, PathBuf};
 use base64::Engine;
 use chrono::Local;
 use serde_json::{Value, json};
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 
-use crate::api::{self, SharedState};
+use crate::api::{self, BeatorajaCalendarSource, SharedState};
+use crate::database;
 use crate::error::{Result, message};
 use crate::stellaverse;
 
@@ -194,6 +195,87 @@ pub async fn fetch_stellaverse_rival(options: Value, state: SharedState<'_>) -> 
 #[tauri::command]
 pub async fn fetch_stellaverse_rankings(options: Value, state: SharedState<'_>) -> Result<Value> {
     stellaverse::fetch_rankings(options, &state).await
+}
+
+#[tauri::command]
+pub async fn open_beatoraja_calendar(
+    app: AppHandle,
+    options: Value,
+    state: SharedState<'_>,
+) -> Result<Value> {
+    let source = BeatorajaCalendarSource {
+        score_db_path: options
+            .get("scoreDbPath")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .trim()
+            .to_string(),
+        song_db_path: options
+            .get("songDbPath")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .trim()
+            .to_string(),
+        language: match options.get("language").and_then(Value::as_str) {
+            Some("en") => "en".into(),
+            _ => "ja".into(),
+        },
+        theme: match options.get("theme").and_then(Value::as_str) {
+            Some("lr2ir-dark") => "lr2ir-dark".into(),
+            _ => "l2tv-pop".into(),
+        },
+    };
+    if source.score_db_path.is_empty() {
+        return Err(message("beatoraja score.db のパスを入力してください。"));
+    }
+    *state.beatoraja_calendar_source.lock().await = Some(source);
+
+    if let Some(window) = app.get_webview_window("beatoraja-calendar") {
+        window
+            .eval("window.dispatchEvent(new Event('l2tv-calendar-source-changed'));")
+            .map_err(|error| message(error.to_string()))?;
+        window.show().map_err(|error| message(error.to_string()))?;
+        window
+            .set_focus()
+            .map_err(|error| message(error.to_string()))?;
+        return Ok(json!({ "opened": true, "reused": true }));
+    }
+
+    let window = WebviewWindowBuilder::new(
+        &app,
+        "beatoraja-calendar",
+        WebviewUrl::App("calendar.html".into()),
+    )
+    .title("L2TV - beatoraja Play Calendar")
+    .inner_size(1180.0, 760.0)
+    .min_inner_size(760.0, 560.0)
+    .resizable(true)
+    .center()
+    .disable_drag_drop_handler()
+    .on_navigation(crate::external::is_app_url)
+    .build()
+    .map_err(|error| message(error.to_string()))?;
+    window.show().map_err(|error| message(error.to_string()))?;
+    Ok(json!({ "opened": true, "reused": false }))
+}
+
+#[tauri::command]
+pub async fn beatoraja_calendar_data(options: Value, state: SharedState<'_>) -> Result<Value> {
+    let source = state
+        .beatoraja_calendar_source
+        .lock()
+        .await
+        .clone()
+        .ok_or_else(|| message("beatorajaカレンダーの読み込み元が設定されていません。"))?;
+    let mut body = options.as_object().cloned().unwrap_or_default();
+    body.insert("scoreDbPath".into(), Value::String(source.score_db_path));
+    body.insert("songDbPath".into(), Value::String(source.song_db_path));
+    let mut result = database::beatoraja_history(Value::Object(body)).await?;
+    if let Some(object) = result.as_object_mut() {
+        object.insert("language".into(), Value::String(source.language));
+        object.insert("theme".into(), Value::String(source.theme));
+    }
+    Ok(result)
 }
 
 #[tauri::command]

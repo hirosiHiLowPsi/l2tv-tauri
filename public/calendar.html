@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>L2TV - beatoraja Play Calendar</title>
+    <link rel="stylesheet" href="/calendar.css" />
+  </head>
+  <body data-theme="l2tv-pop">
+    <main class="calendar-app">
+      <header class="calendar-header">
+        <div>
+          <p class="eyebrow">BEATORAJA HISTORY</p>
+          <h1 id="calendar-title">プレイ履歴カレンダー</h1>
+          <p id="calendar-summary" class="calendar-summary">scoredatalog.db を読み込んでいます。</p>
+        </div>
+        <button id="calendar-refresh" type="button" class="icon-command" title="再読み込み">再読込</button>
+      </header>
+
+      <div id="calendar-error" class="calendar-error hidden" role="alert"></div>
+
+      <section class="calendar-overview" aria-labelledby="calendar-year-title">
+        <div class="heatmap-section">
+          <div class="heatmap-heading">
+            <h2 id="calendar-year-title"></h2>
+            <div class="heatmap-legend" aria-label="更新数の凡例">
+              <span id="legend-less">少</span>
+              <i data-level="0"></i>
+              <i data-level="1"></i>
+              <i data-level="2"></i>
+              <i data-level="3"></i>
+              <i data-level="4"></i>
+              <span id="legend-more">多</span>
+            </div>
+          </div>
+
+          <div class="heatmap-scroll">
+            <div id="heatmap-layout" class="heatmap-layout">
+              <div></div>
+              <div id="month-labels" class="month-labels" aria-hidden="true"></div>
+              <div id="weekday-labels" class="weekday-labels" aria-hidden="true"></div>
+              <div id="heatmap-grid" class="heatmap-grid" role="grid"></div>
+            </div>
+          </div>
+        </div>
+        <nav id="calendar-years" class="calendar-years" aria-label="年"></nav>
+      </section>
+
+      <p id="legacy-history-note" class="history-note hidden"></p>
+
+      <section class="day-details" aria-labelledby="selected-date-title">
+        <header class="day-details-header">
+          <div>
+            <h2 id="selected-date-title">日付を選択してください</h2>
+            <p id="selected-date-summary"></p>
+          </div>
+        </header>
+        <div class="history-table-wrap">
+          <table class="history-table">
+            <thead>
+              <tr>
+                <th id="heading-time">時刻</th>
+                <th id="heading-title">Title</th>
+                <th id="heading-lamp">Lamp</th>
+                <th>EX/Rate</th>
+                <th>BP</th>
+                <th id="heading-option">使用オプション</th>
+              </tr>
+            </thead>
+            <tbody id="history-rows"></tbody>
+          </table>
+          <p id="history-empty" class="history-empty">カレンダーの日付を選択してください。</p>
+        </div>
+      </section>
+    </main>
+
+    <script src="/tauri-bridge.js"></script>
+    <script type="module" src="/calendar.js"></script>
+  </body>
+</html>

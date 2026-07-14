@@ -31,7 +31,7 @@ if ($subsystem -ne 2) {
 }
 
 $frontend = Join-Path $root "dist\frontend"
-foreach ($required in @("index.html", "app.js", "styles.css", "tauri-bridge.js")) {
+foreach ($required in @("index.html", "app.js", "styles.css", "tauri-bridge.js", "calendar.html", "calendar.css", "calendar.js")) {
     if (-not (Test-Path -LiteralPath (Join-Path $frontend $required) -PathType Leaf)) {
         throw "Prepared frontend is missing $required."
     }

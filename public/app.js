@@ -7,11 +7,19 @@ const browseScoreDbButton = document.getElementById("browse-score-db");
 const browseSongDbButton = document.getElementById("browse-song-db");
 const browseScreenshotDirButton = document.getElementById("browse-screenshot-dir");
 const browseRivalFolderButton = document.getElementById("browse-rival-folder");
+const rivalFolderField = document.getElementById("rival-folder-field");
 const tableUrlsInput = document.getElementById("table-urls");
 const manualTableUrlTogglesContainer = document.getElementById("manual-table-url-toggles");
 const languageSelect = document.getElementById("language-select");
+const gameDataModeInputs = [...document.querySelectorAll('input[name="gameDataMode"]')];
+const loadDatabaseSummary = document.getElementById("load-database-summary");
+const scoreDbPathLabel = document.getElementById("score-db-path-label");
+const songDbPathLabel = document.getElementById("song-db-path-label");
+const scoreDbModeField = document.getElementById("score-db-mode-field");
 const scoreDbModeSelect = document.getElementById("score-db-mode-select");
 const allowStellaverseNetworkInput = document.getElementById("allow-stellaverse-network");
+const stellaverseNetworkConsent = document.getElementById("stellaverse-network-consent");
+const stellaverseNetworkHelper = document.getElementById("stellaverse-network-helper");
 const themeSelect = document.getElementById("theme-select");
 const includeBpUpdatesInput = document.getElementById("include-bp-updates");
 const includeUnlistedUpdatesInput = document.getElementById("include-unlisted-updates");
@@ -54,7 +62,7 @@ const exportMessageModal = document.getElementById("export-message-modal");
 const exportMessageText = document.getElementById("export-message-text");
 const exportMessageOkButton = document.getElementById("export-message-ok");
 
-const lampOptions = [
+const LR2_LAMP_OPTIONS = [
   "FULL COMBO",
   "HARD CLEAR",
   "CLEAR",
@@ -64,35 +72,49 @@ const lampOptions = [
   "NO SONG",
 ];
 
+const BEATORAJA_LAMP_OPTIONS = [
+  "MAX",
+  "PERFECT",
+  "FULL COMBO",
+  "EX HARD CLEAR",
+  "HARD CLEAR",
+  "CLEAR",
+  "EASY CLEAR",
+  "ASSIST",
+  "FAILED",
+  "NO PLAY",
+  "NO SONG",
+];
+
+let lampOptions = [...LR2_LAMP_OPTIONS];
+
 const lampLabels = {
+  MAX: "MAX",
+  PERFECT: "PERFECT",
   "FULL COMBO": "FC",
+  "EX HARD CLEAR": "EXHARD",
   "HARD CLEAR": "HC",
   CLEAR: "NC",
   "EASY CLEAR": "EC",
+  ASSIST: "ASSIST",
   FAILED: "FL",
   "NO PLAY": "NP",
   "NO SONG": "NS",
 };
 
 const lampSnapshotColors = {
+  MAX: "#b27cff",
+  PERFECT: "#8fe9ff",
   "FULL COMBO": "#fff0a3",
+  "EX HARD CLEAR": "#f3da63",
   "HARD CLEAR": "#ff9ca4",
   CLEAR: "#5aa1ff",
   "EASY CLEAR": "#7ee7a1",
+  ASSIST: "#bda7d9",
   FAILED: "#9aa4b6",
   "NO PLAY": "#e8e8ea",
   "NO SONG": "#111827",
 };
-
-const levelChartLampOrder = [
-  "FULL COMBO",
-  "HARD CLEAR",
-  "CLEAR",
-  "EASY CLEAR",
-  "FAILED",
-  "NO PLAY",
-  "NO SONG",
-];
 
 const levelChartScoreOrder = ["AAA", "AA", "A", "B", "C", "D", "E", "F", "NO_PLAY", "NO_SONG"];
 const levelChartScoreLabels = {
@@ -194,6 +216,7 @@ const THEME_MODES = ["l2tv-pop", "lr2ir-dark"];
 const DEFAULT_THEME_MODE = "l2tv-pop";
 const LANGUAGE_OPTIONS = ["ja", "en"];
 const DEFAULT_LANGUAGE = "ja";
+const LR2_GAUGE_OPTION_NAMES = new Set(["HARD", "DEATH", "EASY", "P-ATTACK", "G-ATTACK"]);
 const STARTUP_PARAMS = new URLSearchParams(window.location.search);
 const IS_PYWEBVIEW_DESKTOP = STARTUP_PARAMS.get("l2tvWebView") === "1";
 const PYWEBVIEW_STARTUP_LANGUAGE = STARTUP_PARAMS.get("l2tvLanguage");
@@ -205,6 +228,10 @@ const PERSISTENCE_OPEN_TIMEOUT_MS = 2000;
 const PERSISTENCE_LOCAL_STORAGE_PREFIX = `${PERSISTENCE_DB_NAME}:`;
 const FORM_STATE_KEY = "form-state";
 const LAST_ANALYSIS_KEY = "last-analysis";
+const LAST_ANALYSIS_KEYS_BY_MODE = Object.freeze({
+  lr2: "last-analysis-lr2",
+  beatoraja: "last-analysis-beatoraja",
+});
 const TABLE_PRESET_SELECTION_KEY = "table-preset-selection";
 const CUSTOM_TABLE_LIST_KEY = "custom-table-list-entries";
 const STELLAVERSE_RIVAL_IDS_KEY = "stellaverse-rival-ids";
@@ -213,6 +240,8 @@ const DATA_TRANSFER_VERSION = 1;
 const DATA_TRANSFER_KEYS = [
   FORM_STATE_KEY,
   LAST_ANALYSIS_KEY,
+  LAST_ANALYSIS_KEYS_BY_MODE.lr2,
+  LAST_ANALYSIS_KEYS_BY_MODE.beatoraja,
   TABLE_PRESET_SELECTION_KEY,
   CUSTOM_TABLE_LIST_KEY,
   STELLAVERSE_RIVAL_IDS_KEY,
@@ -220,6 +249,8 @@ const DATA_TRANSFER_KEYS = [
 const LAMP_UPDATES_SNAPSHOT_MAX_ITEMS_PER_IMAGE = 250;
 
 let latestAnalysis = null;
+const latestAnalysesByMode = new Map();
+let analysisModeSwitchToken = 0;
 let persistenceDbPromise = null;
 let levelChartMode = "lamp";
 let selectedThemeMode = DEFAULT_THEME_MODE;
@@ -230,6 +261,8 @@ let includeUnlistedChartsInLampUpdates = false;
 let showIrRankInChartList = true;
 let showIrStatusInTableSummary = true;
 let skillAnalyzerFetchMode = "both";
+let gameDataMode = "lr2";
+let databasePathsByMode = createEmptyDatabasePathsByMode();
 let scoreDbMode = "auto";
 let allowStellaverseNetwork = false;
 let disabledManualTableUrls = new Set();
@@ -252,6 +285,7 @@ let selectedRivalSortKey = "win";
 let stellaverseRivalIds = new Set();
 let stellaverseRivalFetchStatus = "";
 let stellaverseRivalFetchBusy = false;
+let embeddedCalendarDocumentPromise = null;
 const tableInfoPanelOpenState = new Map();
 const chartDetailsOpenState = new Map();
 const chartListOpenLevelsState = new Map();
@@ -291,12 +325,17 @@ const I18N_TEXT = {
   "表示": "Display",
   "その他": "Other",
   "score.db と song.db": "score.db and song.db",
+  "プレイ履歴カレンダー": "Play History Calendar",
+  "プレイ履歴カレンダーを表示するにはbeatoraja score.dbを指定してください。": "Select a beatoraja score.db to display the play history calendar.",
   "読み込む表を選択": "Select tables to load",
   "言語・テーマ・IR": "Language, theme, and IR",
   "更新・保存先・データ": "Updates, folders, and data",
   "難易度表一覧から、読み込む表を選択できます。": "Choose tables to load from the table list.",
+  "ゲームモード": "Game Mode",
   "LR2 score.db パス": "LR2 score.db Path",
+  "beatoraja score.db パス": "beatoraja score.db Path",
   "song.db パス": "song.db Path",
+  "songdata.db パス": "songdata.db Path",
   "スクショ保存先": "Screenshot Folder",
   "ライバルフォルダ": "Rival Folder",
   "Stellaverse Rival ID": "Stellaverse Rival ID",
@@ -357,6 +396,18 @@ const I18N_TEXT = {
   "BMS-IR": "BMS-IR",
   "テーマ": "Theme",
   "プレイ回数": "Play Count",
+  "使用オプション": "Play Options",
+  "RANDOM配置": "RANDOM Layout",
+  "7KEY鍵盤配置の凡例": "7KEY lane layout guide",
+  "乱": "RANDOM",
+  "R乱": "R-RANDOM",
+  "S乱": "S-RANDOM",
+  "H乱": "H-RANDOM",
+  "正規": "NORMAL",
+  "鏡": "MIRROR",
+  "全皿": "ALL-SCRATCH",
+  "なし": "None",
+  "不明": "Unknown",
   "本日更新にBPが減った譜面も表示する": "Include charts with lower BP in Lamp Updates",
   "表外譜面も更新楽曲として表示する": "Include updated charts outside loaded tables",
   "表外": "Unlisted",
@@ -436,11 +487,22 @@ const I18N_TEXT = {
   "APIリクエストに失敗しました。": "API request failed.",
   "参照ボタンはデスクトップ版(.exe)で利用できます。ブラウザ版ではパスを直接入力してください。": "Browse is available in the desktop app (.exe). In the browser version, enter the path directly.",
   "LR2 score.db パスを入力してください。": "Enter the LR2 score.db path.",
+  "beatoraja score.db パスを入力してください。": "Enter the beatoraja score.db path.",
+  "score.db パスを入力してください。": "Enter the score.db path.",
   "プレイヤーデータを読み込んでいます。": "Loading player data.",
   "難易度表とローカルのLR2 score.dbを読み込んでいます。\n表の数や曲数によっては少し時間がかかります。": "Loading tables and the local LR2 score.db.\nThis may take a little while depending on the number of tables and charts.",
   "ローカルのLR2 score.dbからプレイヤーデータを読み込んでいます。": "Loading player data from the local LR2 score.db.",
+  "難易度表とローカルのbeatoraja score.dbを読み込んでいます。\n表の数や曲数によっては少し時間がかかります。": "Loading tables and the local beatoraja score.db.\nThis may take a little while depending on the number of tables and charts.",
+  "ローカルのbeatoraja score.dbからプレイヤーデータを読み込んでいます。": "Loading player data from the local beatoraja score.db.",
   "score.db を選択": "Select score.db",
   "song.db を選択": "Select song.db",
+  "songdata.db を選択": "Select songdata.db",
+  "ゲームモードの変更は、次回の読み込みから反映されます。": "The game mode change will take effect on the next load.",
+  "LR2の保存結果を表示しています。": "Showing the saved LR2 result.",
+  "beatorajaの保存結果を表示しています。": "Showing the saved beatoraja result.",
+  "LR2モードにはまだ読み込み結果がありません。": "No LR2 result has been loaded yet.",
+  "beatorajaモードにはまだ読み込み結果がありません。": "No beatoraja result has been loaded yet.",
+  "beatorajaモードではStellaverse IR連携を使用しません。": "Stellaverse IR integration is disabled in beatoraja mode.",
   "スクショ保存先を選択": "Select Screenshot Folder",
   "LR2 Rival フォルダを選択": "Select LR2 Rival Folder",
   "保存してある入力内容と前回の読み込み結果を削除しますか？\n※難易度表の選択状態は保持されます。": "Delete saved input and the previous load result?\nTable selections will be kept.",
@@ -479,9 +541,14 @@ const I18N_TEXT = {
   "許可されていないメソッドです。": "This method is not allowed.",
   "不明なエラーが発生しました。": "An unknown error occurred.",
   "LR2 score.db のパスを入力してください。": "Enter the LR2 score.db path.",
+  "score.db のパスを入力してください。": "Enter the score.db path.",
   "難易度表の読み込みに失敗しました。": "Failed to load the difficulty table.",
   "難易度表を1件も読み込めませんでした。": "No difficulty tables could be loaded.",
   "指定された LR2 score.db が見つかりません。": "The specified LR2 score.db was not found.",
+  "指定された beatoraja score.db が見つかりません。": "The specified beatoraja score.db was not found.",
+  "指定された beatoraja songdata.db が見つかりません。": "The specified beatoraja songdata.db was not found.",
+  "選択したscore.dbはbeatoraja形式ではありません。ゲームモードかDBパスを確認してください。": "The selected score.db is not in beatoraja format. Check the game mode and database path.",
+  "選択した楽曲DBはbeatorajaのsongdata.db形式ではありません。": "The selected song database is not a beatoraja songdata.db file.",
   "score.db の player テーブルを読み取れませんでした。": "Could not read the player table in score.db.",
   "アクセスできません。": "Access denied.",
   "ファイルが見つかりません。": "File not found.",
@@ -516,6 +583,8 @@ const I18N_TEXT = {
 const I18N_ATTRS = {
   "例: D:\\LR2\\LR2files\\Database\\Score\\player.db": "Example: D:\\LR2\\LR2files\\Database\\Score\\player.db",
   "例: D:\\LR2\\LR2files\\Database\\song.db": "Example: D:\\LR2\\LR2files\\Database\\song.db",
+  "例: D:\\beatoraja\\player\\player1\\score.db": "Example: D:\\beatoraja\\player\\player1\\score.db",
+  "例: D:\\beatoraja\\songdata.db": "Example: D:\\beatoraja\\songdata.db",
   "空欄の場合は既定のscreenshotフォルダに保存": "Leave blank to use the default screenshot folder",
   "例: D:\\LR2\\LR2files\\Rival": "Example: D:\\LR2\\LR2files\\Rival",
   "表名で検索": "Search by table name",
@@ -622,7 +691,7 @@ function setRivalPanelOpen(open, options = {}) {
   }
 
   const { closeOther = true } = options;
-  const shouldOpen = Boolean(open);
+  const shouldOpen = Boolean(open) && areRivalFeaturesAvailable();
   if (shouldOpen && closeOther) {
     setControlMenuOpen(false, { restoreFocus: false, closeOther: false });
   }
@@ -701,6 +770,7 @@ function updateLevelModeToggleButton() {
 }
 
 function initializeThemeSelector() {
+  initializeGameDataModeControls();
   initializeScoreDbModeSelector();
   initializeStellaverseNetworkConsent();
 
@@ -784,7 +854,12 @@ function initializeIrDisplayControls() {
 }
 
 function shouldFetchOwnStellaverseRankings() {
-  return allowStellaverseNetwork && (showIrRankInChartList || showIrStatusInTableSummary);
+  return canUseStellaverseNetwork()
+    && (showIrRankInChartList || showIrStatusInTableSummary);
+}
+
+function canUseStellaverseNetwork() {
+  return gameDataMode !== "beatoraja" && allowStellaverseNetwork;
 }
 
 function initializeStellaverseNetworkConsent() {
@@ -818,6 +893,135 @@ function initializeScoreDbModeSelector() {
   });
 }
 
+function initializeGameDataModeControls() {
+  gameDataMode = normalizeGameDataMode(gameDataMode);
+  applyLampOptionsForMode(gameDataMode);
+  syncGameDataModeControls();
+  for (const input of gameDataModeInputs) {
+    input.addEventListener("change", () => {
+      if (!input.checked) {
+        return;
+      }
+      if (analyzeButton?.disabled) {
+        syncGameDataModeControls();
+        return;
+      }
+      void activateGameDataMode(input.value);
+    });
+  }
+}
+
+async function activateGameDataMode(nextMode) {
+  const normalizedMode = normalizeGameDataMode(nextMode);
+  const previousMode = normalizeGameDataMode(gameDataMode);
+  if (normalizedMode === previousMode) {
+    syncGameDataModeControls();
+    return;
+  }
+
+  captureDatabasePathsForMode(previousMode);
+  gameDataMode = normalizedMode;
+  applyDatabasePathsForMode(gameDataMode);
+  applyLampOptionsForMode(gameDataMode);
+  syncGameDataModeControls();
+  autoDbProfileFetchToken += 1;
+  const switchToken = ++analysisModeSwitchToken;
+  await persistFormState();
+
+  const cached = latestAnalysesByMode.get(gameDataMode) ?? null;
+  const persisted = cached ?? await readPersistedAnalysisForMode(gameDataMode);
+  if (switchToken !== analysisModeSwitchToken || normalizedMode !== gameDataMode) {
+    return;
+  }
+
+  resetAnalysisComparisonState();
+  latestAnalysis = persisted ? normalizeAnalysisLampStatuses(persisted) : null;
+  if (latestAnalysis) {
+    cacheLatestAnalysis(latestAnalysis);
+    latestForceRatingChanges = normalizeForceRatingChanges(latestAnalysis?.forceRatingChanges);
+    resultsRoot.classList.remove("hidden");
+    setStatus(gameDataMode === "beatoraja" ? "beatorajaの保存結果を表示しています。" : "LR2の保存結果を表示しています。");
+  } else {
+    resultsRoot.classList.add("hidden");
+    setStatus(gameDataMode === "beatoraja" ? "beatorajaモードにはまだ読み込み結果がありません。" : "LR2モードにはまだ読み込み結果がありません。");
+  }
+  renderAnalysis();
+}
+
+function resetAnalysisComparisonState() {
+  latestLampImprovements = [];
+  latestComparisonBaseAnalysis = null;
+  hasComparedLampImprovements = false;
+  latestKeyHitCountDelta = null;
+  latestPlayTimeDeltaSeconds = null;
+  latestForceRatingChanges = null;
+}
+
+function syncGameDataModeControls() {
+  const isBeatoraja = normalizeGameDataMode(gameDataMode) === "beatoraja";
+  document.body.dataset.gameDataMode = isBeatoraja ? "beatoraja" : "lr2";
+  for (const input of gameDataModeInputs) {
+    input.checked = input.value === gameDataMode;
+  }
+
+  setLocalizedText(loadDatabaseSummary, isBeatoraja ? "score.db と songdata.db" : "score.db と song.db");
+  setLocalizedText(scoreDbPathLabel, isBeatoraja ? "beatoraja score.db パス" : "LR2 score.db パス");
+  setLocalizedText(songDbPathLabel, isBeatoraja ? "songdata.db パス" : "song.db パス");
+  setDynamicLocalizedAttribute(
+    scoreDbPathInput,
+    "placeholder",
+    isBeatoraja
+      ? "例: D:\\beatoraja\\player\\player1\\score.db"
+      : "例: D:\\LR2\\LR2files\\Database\\Score\\player.db",
+  );
+  setDynamicLocalizedAttribute(
+    songDbPathInput,
+    "placeholder",
+    isBeatoraja ? "例: D:\\beatoraja\\songdata.db" : "例: D:\\LR2\\LR2files\\Database\\song.db",
+  );
+
+  scoreDbModeField?.classList.toggle("hidden", isBeatoraja);
+  rivalFolderField?.classList.toggle("hidden", isBeatoraja);
+  stellaverseNetworkConsent?.classList.toggle("hidden", isBeatoraja);
+  stellaverseNetworkHelper?.classList.toggle("hidden", isBeatoraja);
+  if (isBeatoraja) {
+    setRivalPanelOpen(false, { closeOther: false });
+    rivalToggleButton?.classList.add("hidden");
+    rivalPanel?.replaceChildren();
+  } else {
+    window.l2tvEmbeddedCalendarSource = null;
+  }
+  syncSkillAnalyzerFetchModeControls();
+}
+
+function setDynamicLocalizedAttribute(element, attribute, value) {
+  if (!element) {
+    return;
+  }
+  const originalAttribute = `data-i18n-original-${attribute}`;
+  element.setAttribute(originalAttribute, value);
+  element.setAttribute(attribute, selectedLanguage === "en" ? localizeString(value) : value);
+}
+
+function normalizeGameDataMode(value) {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  return normalized === "beatoraja" || normalized === "oraja" ? "beatoraja" : "lr2";
+}
+
+function areRivalFeaturesAvailable() {
+  return normalizeGameDataMode(gameDataMode) === "lr2";
+}
+
+function applyLampOptionsForMode(value) {
+  const mode = normalizeGameDataMode(value);
+  lampOptions = [...(mode === "beatoraja" ? BEATORAJA_LAMP_OPTIONS : LR2_LAMP_OPTIONS)];
+  lampLabels["HARD CLEAR"] = mode === "beatoraja" ? "HARD" : "HC";
+  lampLabels.CLEAR = mode === "beatoraja" ? "NORMAL" : "NC";
+  lampLabels["EASY CLEAR"] = mode === "beatoraja" ? "EASY" : "EC";
+  lampLabels.FAILED = mode === "beatoraja" ? "FAILED" : "FL";
+  lampLabels["NO PLAY"] = mode === "beatoraja" ? "NO PLAY" : "NP";
+}
+
 function initializeSkillAnalyzerFetchModeControls() {
   syncSkillAnalyzerFetchModeControls();
 
@@ -846,7 +1050,7 @@ function initializeSkillAnalyzerFetchModeControls() {
 
 function syncSkillAnalyzerFetchModeControls() {
   skillAnalyzerFetchMode = normalizeSkillAnalyzerFetchMode(skillAnalyzerFetchMode);
-  const isLegacyMode = normalizeScoreDbMode(scoreDbMode) === "legacy";
+  const isLegacyMode = normalizeScoreDbMode(scoreDbMode) === "legacy" || gameDataMode === "beatoraja";
   if (skillFetchStOnlyInput) {
     skillFetchStOnlyInput.checked = skillAnalyzerFetchMode === "st";
     skillFetchStOnlyInput.disabled = isLegacyMode;
@@ -911,6 +1115,10 @@ function applyLanguage(language, options = {}) {
     languageSelect.value = selectedLanguage;
   }
   translateApp();
+  syncGameDataModeControls();
+  if (latestAnalysis && normalizeGameDataMode(gameDataMode) === "beatoraja") {
+    renderAnalysis();
+  }
   updateTableListSelectionSummary(getFilteredTableListEntries().length);
   if (persist) {
     void persistFormState().catch((error) => console.error("Failed to persist form state", error));
@@ -1271,6 +1479,10 @@ function applyTheme(themeMode, options = {}) {
 
   if (includeBpUpdatesInput && includeBpUpdatesInput.checked !== includeBpUpdatesInLampUpdates) {
     includeBpUpdatesInput.checked = includeBpUpdatesInLampUpdates;
+  }
+
+  if (latestAnalysis && normalizeGameDataMode(gameDataMode) === "beatoraja") {
+    renderAnalysis();
   }
 
   if (persist) {
@@ -2340,7 +2552,8 @@ async function pickDirectoryPath({ title, defaultPath }) {
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
   autoDbProfileFetchToken += 1;
-  const previousAnalysis = latestAnalysis;
+  const requestedMode = normalizeGameDataMode(gameDataMode);
+  const previousAnalysis = getLatestAnalysisForMode(requestedMode);
 
   const scoreDbPath = scoreDbPathInput.value.trim();
   const songDbPath = songDbPathInput.value.trim();
@@ -2348,31 +2561,33 @@ form.addEventListener("submit", async (event) => {
   const tableUrls = collectSelectedTableUrls();
 
   if (!scoreDbPath) {
-    setStatus("LR2 score.db パスを入力してください。");
+    setStatus(gameDataMode === "beatoraja" ? "beatoraja score.db パスを入力してください。" : "LR2 score.db パスを入力してください。");
     return;
   }
 
   setControlMenuOpen(false, { restoreFocus: false });
   showMainLoadingFeedback();
   latestAnalysis = null;
-  latestLampImprovements = [];
+  resetAnalysisComparisonState();
   latestComparisonBaseAnalysis = previousAnalysis ?? null;
-  hasComparedLampImprovements = false;
-  latestKeyHitCountDelta = null;
-  latestPlayTimeDeltaSeconds = null;
-  latestForceRatingChanges = null;
   resultsRoot.classList.add("hidden");
   analyzeButton.disabled = true;
 
   const loadingPlayerOnly = tableUrls.length === 0;
+  const isBeatoraja = gameDataMode === "beatoraja";
   let loadingMessage = loadingPlayerOnly
     ? "プレイヤーデータを読み込んでいます。"
-    : "難易度表とローカルのLR2 score.dbを読み込んでいます。\n表の数や曲数によっては少し時間がかかります。";
+    : isBeatoraja
+      ? "難易度表とローカルのbeatoraja score.dbを読み込んでいます。\n表の数や曲数によっては少し時間がかかります。"
+      : "難易度表とローカルのLR2 score.dbを読み込んでいます。\n表の数や曲数によっては少し時間がかかります。";
   if (scoreDbPath && !loadingPlayerOnly) {
-    loadingMessage =
-      "難易度表とローカルのLR2 score.dbを読み込んでいます。\n表の数や曲数によっては少し時間がかかります。";
+    loadingMessage = isBeatoraja
+      ? "難易度表とローカルのbeatoraja score.dbを読み込んでいます。\n表の数や曲数によっては少し時間がかかります。"
+      : "難易度表とローカルのLR2 score.dbを読み込んでいます。\n表の数や曲数によっては少し時間がかかります。";
   } else if (scoreDbPath && loadingPlayerOnly) {
-    loadingMessage = "ローカルのLR2 score.dbからプレイヤーデータを読み込んでいます。";
+    loadingMessage = isBeatoraja
+      ? "ローカルのbeatoraja score.dbからプレイヤーデータを読み込んでいます。"
+      : "ローカルのLR2 score.dbからプレイヤーデータを読み込んでいます。";
   }
   setStatus(loadingMessage);
 
@@ -2380,23 +2595,27 @@ form.addEventListener("submit", async (event) => {
     const payload = await postJsonApi("/api/analyze", {
       scoreDbPath,
       songDbPath,
-      rivalFolderPath,
+      rivalFolderPath: isBeatoraja ? "" : rivalFolderPath,
       tableUrls,
       includeUnlistedUpdates: includeUnlistedChartsInLampUpdates,
       skillAnalyzerFetchMode,
+      gameDataMode,
       scoreDbMode,
-      allowStellaverseNetwork,
+      allowStellaverseNetwork: isBeatoraja ? false : allowStellaverseNetwork,
     });
 
     latestAnalysis = normalizeAnalysisLampStatuses(payload);
-    if (allowStellaverseNetwork && stellaverseRivalIds.size > 0) {
+    cacheLatestAnalysis(latestAnalysis);
+    if (!isBeatoraja && allowStellaverseNetwork && stellaverseRivalIds.size > 0) {
       setStatus("Stellaverse IRからライバルスコアを取得しています。");
       await refreshSavedStellaverseRivals();
     }
     if (shouldFetchOwnStellaverseRankings()) {
       await refreshOwnStellaverseRankings(latestAnalysis);
     }
-    syncSelectedRivalsWithAnalysis(latestAnalysis);
+    if (areRivalFeaturesAvailable()) {
+      syncSelectedRivalsWithAnalysis(latestAnalysis);
+    }
     latestLampImprovements = collectLampImprovements(previousAnalysis, latestAnalysis, {
       includeBpUpdates: includeBpUpdatesInLampUpdates,
     });
@@ -2521,7 +2740,7 @@ browseScoreDbButton.addEventListener("click", async () => {
 });
 browseSongDbButton.addEventListener("click", async () => {
   const selectedPath = await pickDbPath({
-    title: "song.db を選択",
+    title: gameDataMode === "beatoraja" ? "songdata.db を選択" : "song.db を選択",
     defaultPath: songDbPathInput.value.trim(),
   });
   if (!selectedPath) {
@@ -2582,7 +2801,7 @@ async function buildDataTransferPayload() {
     format: DATA_TRANSFER_FORMAT,
     version: DATA_TRANSFER_VERSION,
     exportedAt: new Date().toISOString(),
-    appVersion: "2.1.0",
+    appVersion: "3.0.0",
     data,
   };
 }
@@ -2697,18 +2916,15 @@ clearSavedButton.addEventListener("click", async () => {
 
   await clearPersistedState();
   latestAnalysis = null;
-  latestLampImprovements = [];
-  latestComparisonBaseAnalysis = null;
+  latestAnalysesByMode.clear();
+  analysisModeSwitchToken += 1;
+  resetAnalysisComparisonState();
   selectedRivalIds.clear();
   knownRivalIds.clear();
   stellaverseRivalIds.clear();
   stellaverseRivalFetchStatus = "";
   rivalSelectionInitialized = false;
   renderRivalPanel();
-  hasComparedLampImprovements = false;
-  latestKeyHitCountDelta = null;
-  latestPlayTimeDeltaSeconds = null;
-  latestForceRatingChanges = null;
   tableInfoPanelOpenState.clear();
   chartDetailsOpenState.clear();
   chartListOpenLevelsState.clear();
@@ -2750,6 +2966,10 @@ clearSavedButton.addEventListener("click", async () => {
   if (allowStellaverseNetworkInput) {
     allowStellaverseNetworkInput.checked = false;
   }
+  gameDataMode = "lr2";
+  databasePathsByMode = createEmptyDatabasePathsByMode();
+  applyLampOptionsForMode(gameDataMode);
+  syncGameDataModeControls();
   skillAnalyzerFetchMode = "both";
   scoreDbMode = "auto";
   if (scoreDbModeSelect) {
@@ -2769,13 +2989,19 @@ function renderAnalysis() {
     translateApp();
     return;
   }
-  syncSelectedRivalsWithAnalysis(latestAnalysis);
+  if (areRivalFeaturesAvailable()) {
+    syncSelectedRivalsWithAnalysis(latestAnalysis);
+  }
   renderManualTableUrlToggles();
   renderRivalPanel();
   hideFloatingTooltip();
 
   resultsRoot.innerHTML = "";
   resultsRoot.append(renderOverviewPanel(latestAnalysis));
+  const beatorajaCalendar = renderBeatorajaCalendarSection();
+  if (beatorajaCalendar) {
+    resultsRoot.append(beatorajaCalendar);
+  }
   const lampImprovementPanel = renderLampImprovementsPanel(latestLampImprovements, hasComparedLampImprovements);
   if (lampImprovementPanel) {
     resultsRoot.append(lampImprovementPanel);
@@ -2895,6 +3121,13 @@ function getAnalysisRivalIds(analysis) {
 
 function renderRivalPanel() {
   if (!rivalToggleButton || !rivalPanel) {
+    return;
+  }
+
+  if (!areRivalFeaturesAvailable()) {
+    setRivalPanelOpen(false, { closeOther: false });
+    rivalToggleButton.classList.add("hidden");
+    rivalPanel.replaceChildren();
     return;
   }
 
@@ -3120,13 +3353,13 @@ function createStellaverseRivalImportControl() {
   input.maxLength = 10;
   input.placeholder = "123456";
   input.autocomplete = "off";
-  input.disabled = stellaverseRivalFetchBusy || !latestAnalysis || !allowStellaverseNetwork;
+  input.disabled = stellaverseRivalFetchBusy || !latestAnalysis || !canUseStellaverseNetwork();
 
   const button = document.createElement("button");
   button.type = "button";
   button.className = "button-secondary stellaverse-rival-fetch";
   button.textContent = stellaverseRivalFetchBusy ? "取得中…" : "取得";
-  button.disabled = stellaverseRivalFetchBusy || !latestAnalysis || !allowStellaverseNetwork;
+  button.disabled = stellaverseRivalFetchBusy || !latestAnalysis || !canUseStellaverseNetwork();
 
   const fetchEnteredRival = async () => {
     const playerId = input.value.trim();
@@ -3151,8 +3384,10 @@ function createStellaverseRivalImportControl() {
 
   const status = document.createElement("p");
   status.className = "helper stellaverse-rival-status";
-  status.textContent = stellaverseRivalFetchStatus || (!allowStellaverseNetwork
-    ? "Stellaverse IRへの接続をメニューで許可してください。"
+  status.textContent = stellaverseRivalFetchStatus || (!canUseStellaverseNetwork()
+    ? gameDataMode === "beatoraja"
+      ? "beatorajaモードではStellaverse IR連携を使用しません。"
+      : "Stellaverse IRへの接続をメニューで許可してください。"
     : latestAnalysis
       ? "IDを入力してStellaverse IRの公開スコアを比較できます。"
       : "表とランプを読み込んだ後、Stellaverse Rival IDを追加できます。");
@@ -3164,8 +3399,10 @@ async function addStellaverseRival(playerId) {
   if (!latestAnalysis) {
     return;
   }
-  if (!allowStellaverseNetwork) {
-    stellaverseRivalFetchStatus = "Stellaverse IRへの接続をメニューで許可してください。";
+  if (!canUseStellaverseNetwork()) {
+    stellaverseRivalFetchStatus = gameDataMode === "beatoraja"
+      ? "beatorajaモードではStellaverse IR連携を使用しません。"
+      : "Stellaverse IRへの接続をメニューで許可してください。";
     renderRivalPanel();
     return;
   }
@@ -3191,7 +3428,7 @@ async function addStellaverseRival(playerId) {
 }
 
 async function refreshSavedStellaverseRivals() {
-  if (!allowStellaverseNetwork) {
+  if (!canUseStellaverseNetwork()) {
     return;
   }
   for (const playerId of stellaverseRivalIds) {
@@ -3205,7 +3442,7 @@ async function refreshSavedStellaverseRivals() {
 }
 
 async function fetchStellaverseRivalFromDesktop(playerId) {
-  if (!allowStellaverseNetwork) {
+  if (!canUseStellaverseNetwork()) {
     throw new Error("Stellaverse IRへの接続をメニューで許可してください。");
   }
   if (typeof window.lr2irDesktop?.fetchStellaverseRival !== "function") {
@@ -3597,6 +3834,64 @@ function renderOverviewPanel(analysis) {
   }
 
   return section;
+}
+
+function renderBeatorajaCalendarSection() {
+  if (normalizeGameDataMode(gameDataMode) !== "beatoraja") {
+    return null;
+  }
+
+  const scoreDbPath = scoreDbPathInput.value.trim();
+  const section = document.createElement("section");
+  section.className = "beatoraja-calendar-inline";
+  section.setAttribute("aria-label", localizeString("プレイ履歴カレンダー"));
+
+  if (!scoreDbPath) {
+    const message = document.createElement("p");
+    message.className = "helper beatoraja-calendar-inline-empty";
+    message.textContent = localizeString("プレイ履歴カレンダーを表示するにはbeatoraja score.dbを指定してください。");
+    section.append(message);
+    return section;
+  }
+
+  window.l2tvEmbeddedCalendarSource = Object.freeze({
+    scoreDbPath,
+    songDbPath: songDbPathInput.value.trim(),
+    language: selectedLanguage,
+    theme: selectedThemeMode,
+  });
+
+  const frame = document.createElement("iframe");
+  frame.className = "beatoraja-calendar-frame";
+  frame.title = localizeString("プレイ履歴カレンダー");
+  frame.loading = "lazy";
+  frame.srcdoc = '<!doctype html><html><body aria-busy="true"></body></html>';
+  section.append(frame);
+  loadEmbeddedCalendarDocument(frame);
+  return section;
+}
+
+function loadEmbeddedCalendarDocument(frame) {
+  embeddedCalendarDocumentPromise ||= fetch("/calendar.html", { credentials: "same-origin" })
+    .then((response) => {
+      if (!response.ok) {
+        throw new Error(`Calendar document request failed: ${response.status}`);
+      }
+      return response.text();
+    });
+
+  void embeddedCalendarDocumentPromise
+    .then((calendarDocument) => {
+      if (frame.isConnected) {
+        frame.srcdoc = calendarDocument;
+      }
+    })
+    .catch((error) => {
+      console.error("Failed to load the embedded beatoraja calendar", error);
+      if (frame.isConnected) {
+        frame.srcdoc = '<!doctype html><html><body><p>プレイ履歴カレンダーを読み込めませんでした。</p></body></html>';
+      }
+    });
 }
 
 function renderForceRatingBest50Folder(forceRating, changes) {
@@ -5277,7 +5572,7 @@ function getSnapshotLevelChartDefs(mode) {
     }));
   }
 
-  return levelChartLampOrder.map((lamp) => ({
+  return lampOptions.map((lamp) => ({
     label: toChartLampLabel(lamp),
     color: lampSnapshotColors[lamp],
     lamp,
@@ -6181,7 +6476,7 @@ function renderLevelChart(table, filteredCharts, mode = "lamp") {
 }
 
 function buildLampChartDefs(filteredCharts) {
-  return levelChartLampOrder.map((lamp) => ({
+  return lampOptions.map((lamp) => ({
     label: toChartLampLabel(lamp),
     segmentClass: `segment-${toLampSlug(lamp)}`,
     matches: (chart) => chart.lampStatus === lamp,
@@ -6455,12 +6750,25 @@ function getLevelGroupLampTone(charts) {
   if (lamps.length === 0) {
     return "";
   }
-  const hardClearOrBetter = new Set(["FULL COMBO", "HARD CLEAR"]);
-  const clearOrBetter = new Set(["FULL COMBO", "HARD CLEAR", "CLEAR"]);
-  const easyClearOrBetter = new Set(["FULL COMBO", "HARD CLEAR", "CLEAR", "EASY CLEAR"]);
-  const playedLamps = new Set(["FULL COMBO", "HARD CLEAR", "CLEAR", "EASY CLEAR", "FAILED"]);
-  if (lamps.every((lamp) => lamp === "FULL COMBO")) {
+  const perfectOrBetter = new Set(["MAX", "PERFECT"]);
+  const fullComboOrBetter = new Set(["MAX", "PERFECT", "FULL COMBO"]);
+  const exHardClearOrBetter = new Set([...fullComboOrBetter, "EX HARD CLEAR"]);
+  const hardClearOrBetter = new Set([...exHardClearOrBetter, "HARD CLEAR"]);
+  const clearOrBetter = new Set([...hardClearOrBetter, "CLEAR"]);
+  const easyClearOrBetter = new Set([...clearOrBetter, "EASY CLEAR"]);
+  const assistOrBetter = new Set([...easyClearOrBetter, "ASSIST"]);
+  const playedLamps = new Set([...assistOrBetter, "FAILED"]);
+  if (lamps.every((lamp) => lamp === "MAX")) {
+    return "max";
+  }
+  if (lamps.every((lamp) => perfectOrBetter.has(lamp))) {
+    return "perfect";
+  }
+  if (lamps.every((lamp) => fullComboOrBetter.has(lamp))) {
     return "full-combo";
+  }
+  if (lamps.every((lamp) => exHardClearOrBetter.has(lamp))) {
+    return "ex-hard-clear";
   }
   if (lamps.every((lamp) => hardClearOrBetter.has(lamp))) {
     return "hard-clear";
@@ -6470,6 +6778,9 @@ function getLevelGroupLampTone(charts) {
   }
   if (lamps.every((lamp) => easyClearOrBetter.has(lamp))) {
     return "easy-clear";
+  }
+  if (lamps.every((lamp) => assistOrBetter.has(lamp))) {
+    return "assist";
   }
   if (lamps.every((lamp) => playedLamps.has(lamp)) && lamps.some((lamp) => lamp === "FAILED")) {
     return "failed";
@@ -6716,7 +7027,11 @@ function renderChartTable(charts, tableInfo, state, rerender) {
 
     const titleCell = document.createElement("td");
     titleCell.className = `chart-title-cell ${lampClass}`;
-    titleCell.innerHTML = `<div class="chart-title">${escapeHtml(chart.title)}</div>`;
+    const title = document.createElement("div");
+    title.className = "chart-title";
+    title.textContent = chart.title;
+    titleCell.append(title);
+    appendScoreOptionDetails(titleCell, chart);
 
     const artistCell = document.createElement("td");
     artistCell.className = "chart-artist-cell";
@@ -6739,13 +7054,171 @@ function renderChartTable(charts, tableInfo, state, rerender) {
     if (showIrRankInChartList) {
       cells.push(createIrRankCell(chart));
     }
-    cells.push(createRivalCell(chart));
+    if (areRivalFeaturesAvailable()) {
+      cells.push(createRivalCell(chart));
+    }
     row.append(...cells);
     tbody.append(row);
   }
 
   table.append(tbody);
   return table;
+}
+
+function appendScoreOptionDetails(titleCell, chart) {
+  const rawOption = String(chart?.playOption ?? "").trim();
+  if (!rawOption) {
+    return;
+  }
+
+  const option = describeScoreRandomOption(rawOption);
+
+  const details = document.createElement("div");
+  details.className = "chart-score-options";
+  details.dataset.i18nSkip = "true";
+
+  const optionLine = document.createElement("div");
+  optionLine.className = "chart-score-option-line";
+  optionLine.append(
+    createScoreOptionLabel(localizeString("使用オプション")),
+    createScoreOptionValue(option.label),
+  );
+  details.append(optionLine);
+
+  const keyboardLayout = getScoreOptionKeyboardLayout(chart, option.type);
+  if (keyboardLayout) {
+    const layoutLine = document.createElement("div");
+    layoutLine.className = "chart-random-layout-line";
+    layoutLine.append(createRandomLayoutKeyboard(keyboardLayout));
+    details.append(layoutLine);
+  }
+
+  titleCell.append(details);
+}
+
+function createScoreOptionLabel(text) {
+  const label = document.createElement("span");
+  label.className = "chart-score-option-label";
+  label.textContent = `${text}:`;
+  return label;
+}
+
+function createScoreOptionValue(text, extraClass = "") {
+  const value = document.createElement("strong");
+  value.className = `chart-score-option-value ${extraClass}`.trim();
+  value.textContent = text;
+  return value;
+}
+
+function describeScoreRandomOption(value) {
+  const normalized = String(value ?? "").trim().toUpperCase();
+  if (!normalized || normalized === "UNKNOWN") {
+    return { label: localizeString("不明"), type: "unknown" };
+  }
+
+  const parts = normalized
+    .split(/\s*\/\s*/)
+    .filter((part) => part && part !== "NONE" && !LR2_GAUGE_OPTION_NAMES.has(part));
+  if (parts.length === 0) {
+    return { label: localizeString("正規"), type: "normal" };
+  }
+
+  const type = ["MIRROR", "RANDOM", "R-RANDOM", "S-RANDOM", "H-RANDOM", "ALL-SCRATCH"].includes(parts[0])
+    ? parts[0].toLowerCase()
+    : "other";
+  return {
+    label: parts.map(formatScoreRandomOptionPart).join(" / "),
+    type,
+  };
+}
+
+function formatScoreRandomOptionPart(value) {
+  const playerMatch = value.match(/^([12]P)\s+(.+)$/);
+  if (playerMatch) {
+    return `${playerMatch[1]} ${formatScoreRandomOptionPart(playerMatch[2])}`;
+  }
+  const labels = {
+    MIRROR: "鏡",
+    RANDOM: "乱",
+    "R-RANDOM": "R乱",
+    "S-RANDOM": "S乱",
+    "H-RANDOM": "H乱",
+    "ALL-SCRATCH": "全皿",
+  };
+  return labels[value] ? localizeString(labels[value]) : value;
+}
+
+function getScoreOptionKeyboardLayout(chart, optionType) {
+  if (Number(chart?.keyMode) !== 7) {
+    return "";
+  }
+  if (optionType === "normal") {
+    return "1234567";
+  }
+  if (optionType === "mirror") {
+    return "7654321";
+  }
+  if (optionType === "random" || optionType === "r-random") {
+    const randomLayout = String(chart?.randomLayout ?? "").trim();
+    return isValidRandomLayout(randomLayout) ? randomLayout : "";
+  }
+  return "";
+}
+
+function isValidRandomLayout(value) {
+  return /^[1-7]{7}$/.test(value) && new Set(value).size === 7;
+}
+
+function createRandomLayoutKeyboard(layout) {
+  const keyboard = document.createElement("span");
+  keyboard.className = "chart-random-layout-keyboard";
+  keyboard.dataset.layout = layout;
+  keyboard.setAttribute("role", "img");
+  keyboard.setAttribute("aria-label", `${localizeString("RANDOM配置")}: ${layout}`);
+
+  for (const lane of layout) {
+    const key = document.createElement("img");
+    key.className = "chart-random-layout-key";
+    key.dataset.lane = lane;
+    key.src = `./assets/keys/key_${lane}.png`;
+    key.alt = "";
+    key.width = 64;
+    key.height = 76;
+    key.decoding = "async";
+    key.draggable = false;
+    key.setAttribute("aria-hidden", "true");
+    keyboard.append(key);
+  }
+  return keyboard;
+}
+
+function renderAnalysisForE2e(analysis, mode) {
+  gameDataMode = normalizeGameDataMode(mode);
+  latestAnalysis = normalizeAnalysisLampStatuses(analysis);
+  applyLampOptionsForMode(gameDataMode);
+  syncGameDataModeControls();
+  renderAnalysis();
+  resultsRoot.classList.remove("hidden");
+}
+
+function exposeE2eTestHooks() {
+  if (window.__L2TV_E2E__ !== true) {
+    return;
+  }
+  window.__l2tvE2e = Object.freeze({
+    createRandomLayoutKeyboard,
+    describeScoreRandomOption,
+    getScoreOptionKeyboardLayout,
+    getAnalysisGameDataMode,
+    getLastAnalysisKeyForMode,
+    normalizeDatabasePathsByMode,
+    setDatabasePathsForMode,
+    captureDatabasePathsForMode,
+    applyDatabasePathsForMode,
+    areRivalFeaturesAvailable,
+    getVisibleChartSortColumns,
+    renderAnalysisForE2e,
+  });
 }
 
 function createLevelGroupGraph(charts, mode = "lamp") {
@@ -6828,9 +7301,15 @@ function normalizeChartSortKey(value) {
 }
 
 function getVisibleChartSortColumns() {
-  return showIrRankInChartList
-    ? chartSortColumns
-    : chartSortColumns.filter((column) => column.key !== "irRank");
+  return chartSortColumns.filter((column) => {
+    if (column.key === "irRank" && !showIrRankInChartList) {
+      return false;
+    }
+    if (column.key === "rival" && !areRivalFeaturesAvailable()) {
+      return false;
+    }
+    return true;
+  });
 }
 
 function compareChartsForSort(left, right, table, sortKey, sortDirection) {
@@ -7423,6 +7902,8 @@ function getChartSearchText(chart) {
     chart.maxExScore,
     chart.scoreRate,
     chart.maxOffset,
+    chart.playOption,
+    chart.randomLayout,
   ]
     .filter(Boolean)
     .join(" ")
@@ -7430,8 +7911,9 @@ function getChartSearchText(chart) {
 }
 
 function buildStatusMessage(analysis) {
-  const sourceLine = `LR2 score.db: ${analysis.player.localDbPath || "-"}`;
-  const localSongDbLine = `song.db: ${analysis.player.localSongDbPath || "見つかりません"}`;
+  const isBeatoraja = normalizeGameDataMode(analysis?.player?.gameDataMode) === "beatoraja";
+  const sourceLine = `${isBeatoraja ? "beatoraja" : "LR2"} score.db: ${analysis.player.localDbPath || "-"}`;
+  const localSongDbLine = `${isBeatoraja ? "songdata.db" : "song.db"}: ${analysis.player.localSongDbPath || "見つかりません"}`;
 
   const lines = [
     analysis.tables.length
@@ -7525,8 +8007,9 @@ async function autoFetchProfileFromScoreDb() {
       scoreDbPath,
       songDbPath: songDbPathInput.value.trim(),
       skillAnalyzerFetchMode,
+      gameDataMode,
       scoreDbMode,
-      allowStellaverseNetwork,
+      allowStellaverseNetwork: gameDataMode === "beatoraja" ? false : allowStellaverseNetwork,
     });
 
     if (token !== autoDbProfileFetchToken) {
@@ -7536,6 +8019,7 @@ async function autoFetchProfileFromScoreDb() {
     const fetchedPlayer = {
       id: String(payload?.player?.id ?? "").trim() || "local",
       sourceType: "local-score-db",
+      gameDataMode: normalizeGameDataMode(payload?.player?.gameDataMode || gameDataMode),
       name: String(payload?.player?.name ?? "").trim(),
       grade: String(payload?.player?.grade ?? "").trim(),
       gradeSp: String(payload?.player?.gradeSp ?? "").trim(),
@@ -8208,7 +8692,21 @@ function getLampImprovementKindRank(item) {
 
 function isClearLampStatus(lamp) {
   const normalized = normalizeLampStatusForUi(lamp);
-  return ["FULL COMBO", "HARD CLEAR", "CLEAR", "EASY CLEAR"].includes(normalized);
+  return [
+    "MAX",
+    "PERFECT",
+    "FULL COMBO",
+    "EX HARD CLEAR",
+    "HARD CLEAR",
+    "CLEAR",
+    "EASY CLEAR",
+    "ASSIST",
+  ].includes(normalized);
+}
+
+function isPlayedLampStatus(lamp) {
+  const normalized = normalizeLampStatusForUi(lamp);
+  return isClearLampStatus(normalized) || normalized === "FAILED";
 }
 
 function buildLampImprovementAggregateKey(chart, previousLamp, currentLamp, updateKind = "lamp") {
@@ -8659,13 +9157,11 @@ function buildLampSummaryFromCharts(charts) {
 }
 
 function countClearFromCharts(charts) {
-  return charts.filter((chart) => ["FULL COMBO", "HARD CLEAR", "CLEAR", "EASY CLEAR"].includes(chart.lampStatus)).length;
+  return charts.filter((chart) => isClearLampStatus(chart?.lampStatus)).length;
 }
 
 function countPlayedFromCharts(charts) {
-  return charts.filter((chart) =>
-    ["FULL COMBO", "HARD CLEAR", "CLEAR", "EASY CLEAR", "FAILED"].includes(chart.lampStatus),
-  ).length;
+  return charts.filter((chart) => isPlayedLampStatus(chart?.lampStatus)).length;
 }
 
 function buildLevelSummariesForUi(charts, levelOrder = []) {
@@ -8694,7 +9190,14 @@ function buildLevelSummariesForUi(charts, levelOrder = []) {
 }
 
 function normalizeAnalysisLampStatuses(analysis) {
-  if (!analysis || typeof analysis !== "object" || !Array.isArray(analysis.tables)) {
+  if (!analysis || typeof analysis !== "object") {
+    return analysis;
+  }
+
+  gameDataMode = normalizeGameDataMode(analysis?.player?.gameDataMode || analysis?.gameDataMode || gameDataMode);
+  applyLampOptionsForMode(gameDataMode);
+  syncGameDataModeControls();
+  if (!Array.isArray(analysis.tables)) {
     return analysis;
   }
 
@@ -8894,6 +9397,7 @@ function createEmptyLampSummary() {
   return Object.fromEntries(lampOptions.map((lamp) => [lamp, 0]));
 }
 
+exposeE2eTestHooks();
 initializePersistence().catch((error) => {
   console.error("Failed to initialize persistence", error);
 });
@@ -8991,6 +9495,7 @@ async function fetchLocalDbState(scoreDbPath, songDbPath) {
   return postJsonApi("/api/local-db-state", {
     scoreDbPath: String(scoreDbPath ?? "").trim(),
     songDbPath: String(songDbPath ?? "").trim(),
+    gameDataMode,
   });
 }
 
@@ -9120,14 +9625,109 @@ async function restoreStellaverseRivalIds() {
   );
 }
 
+function createEmptyDatabasePathsByMode() {
+  return {
+    lr2: { scoreDbPath: "", songDbPath: "" },
+    beatoraja: { scoreDbPath: "", songDbPath: "" },
+  };
+}
+
+function normalizeDatabasePathsByMode(value) {
+  const normalized = createEmptyDatabasePathsByMode();
+  for (const mode of Object.keys(normalized)) {
+    const source = value?.[mode];
+    normalized[mode] = {
+      scoreDbPath: String(source?.scoreDbPath ?? "").trim(),
+      songDbPath: String(source?.songDbPath ?? "").trim(),
+    };
+  }
+  return normalized;
+}
+
+function setDatabasePathsForMode(value, mode, scoreDbPath, songDbPath) {
+  const normalized = normalizeDatabasePathsByMode(value);
+  normalized[normalizeGameDataMode(mode)] = {
+    scoreDbPath: String(scoreDbPath ?? "").trim(),
+    songDbPath: String(songDbPath ?? "").trim(),
+  };
+  return normalized;
+}
+
+function captureDatabasePathsForMode(mode = gameDataMode) {
+  databasePathsByMode = setDatabasePathsForMode(
+    databasePathsByMode,
+    mode,
+    scoreDbPathInput.value,
+    songDbPathInput.value,
+  );
+}
+
+function applyDatabasePathsForMode(mode = gameDataMode) {
+  const normalizedMode = normalizeGameDataMode(mode);
+  const paths = databasePathsByMode[normalizedMode] ?? createEmptyDatabasePathsByMode()[normalizedMode];
+  scoreDbPathInput.value = paths.scoreDbPath;
+  songDbPathInput.value = paths.songDbPath;
+}
+
+function getAnalysisGameDataMode(analysis, fallback = gameDataMode) {
+  return normalizeGameDataMode(analysis?.player?.gameDataMode || analysis?.gameDataMode || fallback);
+}
+
+function getLastAnalysisKeyForMode(mode = gameDataMode) {
+  return LAST_ANALYSIS_KEYS_BY_MODE[normalizeGameDataMode(mode)];
+}
+
+function cacheLatestAnalysis(analysis) {
+  if (!analysis || typeof analysis !== "object") {
+    return null;
+  }
+  latestAnalysesByMode.set(getAnalysisGameDataMode(analysis), analysis);
+  return analysis;
+}
+
+function getLatestAnalysisForMode(mode = gameDataMode) {
+  const normalizedMode = normalizeGameDataMode(mode);
+  const cached = latestAnalysesByMode.get(normalizedMode);
+  if (cached) {
+    return cached;
+  }
+  return latestAnalysis && getAnalysisGameDataMode(latestAnalysis) === normalizedMode
+    ? latestAnalysis
+    : null;
+}
+
+async function readPersistedAnalysisForMode(mode = gameDataMode) {
+  const normalizedMode = normalizeGameDataMode(mode);
+  const modeKey = getLastAnalysisKeyForMode(normalizedMode);
+  const persisted = await readPersistedValue(modeKey);
+  if (persisted) {
+    return getAnalysisGameDataMode(persisted, normalizedMode) === normalizedMode ? persisted : null;
+  }
+
+  const legacy = await readPersistedValue(LAST_ANALYSIS_KEY);
+  if (!legacy || getAnalysisGameDataMode(legacy, normalizedMode) !== normalizedMode) {
+    return null;
+  }
+  await writePersistedValue(modeKey, legacy);
+  return legacy;
+}
+
 async function restoreFormState() {
   const persisted = await readPersistedValue(FORM_STATE_KEY);
   if (!persisted) {
     return false;
   }
 
-  scoreDbPathInput.value = persisted.scoreDbPath ?? "";
-  songDbPathInput.value = persisted.songDbPath ?? "";
+  gameDataMode = normalizeGameDataMode(persisted.gameDataMode);
+  databasePathsByMode = normalizeDatabasePathsByMode(persisted.databasePathsByMode);
+  const activePaths = databasePathsByMode[gameDataMode];
+  if (!activePaths.scoreDbPath && persisted.scoreDbPath) {
+    activePaths.scoreDbPath = String(persisted.scoreDbPath).trim();
+  }
+  if (!activePaths.songDbPath && persisted.songDbPath) {
+    activePaths.songDbPath = String(persisted.songDbPath).trim();
+  }
+  applyDatabasePathsForMode(gameDataMode);
   if (screenshotDirPathInput) {
     screenshotDirPathInput.value = persisted.screenshotDirPath ?? "";
   }
@@ -9141,6 +9741,8 @@ async function restoreFormState() {
   renderManualTableUrlToggles();
   levelChartMode = normalizeLevelChartMode(persisted.levelChartMode);
   updateLevelModeToggleButton();
+  applyLampOptionsForMode(gameDataMode);
+  syncGameDataModeControls();
   hasStoredLanguagePreference =
     Boolean(persisted.languagePromptSeen) || Object.prototype.hasOwnProperty.call(persisted, "language");
   applyLanguage(persisted.language, { persist: false });
@@ -9175,12 +9777,13 @@ async function restoreFormState() {
 }
 
 async function restoreLatestAnalysis() {
-  const persisted = await readPersistedValue(LAST_ANALYSIS_KEY);
+  const persisted = await readPersistedAnalysisForMode(gameDataMode);
   if (!persisted) {
     return null;
   }
 
   latestAnalysis = normalizeAnalysisLampStatuses(persisted);
+  cacheLatestAnalysis(latestAnalysis);
   latestForceRatingChanges = normalizeForceRatingChanges(latestAnalysis?.forceRatingChanges);
   renderAnalysis();
   resultsRoot.classList.remove("hidden");
@@ -9191,6 +9794,7 @@ async function persistFormState() {
   if (dataTransferImportInProgress) {
     return false;
   }
+  captureDatabasePathsForMode(gameDataMode);
   await writePersistedValue(FORM_STATE_KEY, {
     scoreDbPath: scoreDbPathInput.value.trim(),
     songDbPath: songDbPathInput.value.trim(),
@@ -9207,6 +9811,8 @@ async function persistFormState() {
     showIrRankInChartList,
     showIrStatusInTableSummary,
     allowStellaverseNetwork,
+    gameDataMode,
+    databasePathsByMode,
     scoreDbMode,
     skillAnalyzerFetchMode,
   });
@@ -9217,13 +9823,19 @@ async function persistLatestAnalysis(analysis) {
   if (dataTransferImportInProgress) {
     return false;
   }
-  await writePersistedValue(LAST_ANALYSIS_KEY, analysis);
+  const cached = cacheLatestAnalysis(analysis);
+  if (!cached) {
+    return false;
+  }
+  await writePersistedValue(getLastAnalysisKeyForMode(getAnalysisGameDataMode(cached)), cached);
   return true;
 }
 
 async function clearPersistedState() {
   await deletePersistedValue(FORM_STATE_KEY);
   await deletePersistedValue(LAST_ANALYSIS_KEY);
+  await deletePersistedValue(LAST_ANALYSIS_KEYS_BY_MODE.lr2);
+  await deletePersistedValue(LAST_ANALYSIS_KEYS_BY_MODE.beatoraja);
   await deletePersistedValue(STELLAVERSE_RIVAL_IDS_KEY);
   await deletePersistedValue("player-profile-cache");
 }

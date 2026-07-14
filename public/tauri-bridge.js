@@ -15,6 +15,8 @@
     exportDataTransfer: (options) => invoke("export_data_transfer", { options: options ?? {} }),
     importDataTransfer: () => invoke("import_data_transfer"),
     fetchStellaverseRival: (options) => invoke("fetch_stellaverse_rival", { options: options ?? {} }),
-    fetchStellaverseRankings: (options) => invoke("fetch_stellaverse_rankings", { options: options ?? {} })
+    fetchStellaverseRankings: (options) => invoke("fetch_stellaverse_rankings", { options: options ?? {} }),
+    openBeatorajaCalendar: (options) => invoke("open_beatoraja_calendar", { options: options ?? {} }),
+    getBeatorajaCalendarData: (options) => invoke("beatoraja_calendar_data", { options: options ?? {} })
   });
 })();
