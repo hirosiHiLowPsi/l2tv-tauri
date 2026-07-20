@@ -62,7 +62,7 @@ jobs:
           name: L2TV-Tauri-Windows-x64
           path: release-assets
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: release-assets/*.7z
       - name: Create or update GitHub Release
