@@ -348,9 +348,22 @@ fn parse_clear_status(html: &str, player_id: &str) -> Result<ClearStatus> {
         }
     }
 
+    parse_clear_status_document(&document, player_id).or_else(|primary_error| {
+        if let Some(embedded_html) = extract_embedded_clear_status_html(html) {
+            let embedded_document = Html::parse_document(&embedded_html);
+            parse_clear_status_document(&embedded_document, player_id)
+        } else {
+            Err(primary_error)
+        }
+    })
+}
+
+fn parse_clear_status_document(document: &Html, player_id: &str) -> Result<ClearStatus> {
     let table_selector = selector("table")?;
     let header_selector = selector("th")?;
-    let row_selector = selector("tbody tr")?;
+    // Browser DOM inserts <tbody> automatically, but the server-rendered source may
+    // contain rows directly under <table>. Read every row and skip header rows.
+    let row_selector = selector("tr")?;
     let cell_selector = selector("td")?;
     let link_selector = selector("a[href^=\"/charts/\"]")?;
     let heading_selector = selector("h3")?;
@@ -365,10 +378,10 @@ fn parse_clear_status(html: &str, player_id: &str) -> Result<ClearStatus> {
                 .collect::<Vec<_>>();
             headers
                 .iter()
-                .any(|value| value.to_ascii_uppercase().starts_with("EX"))
+                .any(|value| normalize_header_label(value).starts_with("EX"))
                 && headers
                     .iter()
-                    .any(|value| value.to_ascii_uppercase().starts_with("BP"))
+                    .any(|value| normalize_header_label(value).starts_with("BP"))
         })
         .ok_or_else(|| message("Stellaverse IRのスコア表を確認できませんでした。"))?;
 
@@ -408,6 +421,48 @@ fn parse_clear_status(html: &str, player_id: &str) -> Result<ClearStatus> {
     }
 
     Ok(ClearStatus { name, entries })
+}
+
+fn normalize_header_label(value: &str) -> String {
+    value
+        .chars()
+        .filter(|character| character.is_ascii_alphanumeric() || *character == '%')
+        .collect::<String>()
+        .to_ascii_uppercase()
+}
+
+fn extract_embedded_clear_status_html(html: &str) -> Option<String> {
+    let mut fragments = Vec::new();
+    let script_regex = Regex::new(r#"(?s)self\.__next_f\.push\(\[1,\s*"((?:\\.|[^"\\])*)"\s*\]\)"#)
+        .expect("Next flight script regex");
+    for capture in script_regex.captures_iter(html) {
+        let Some(raw) = capture.get(1).map(|value| value.as_str()) else {
+            continue;
+        };
+        let decoded = decode_javascript_string(raw);
+        if decoded.contains("clear-status-table") || decoded.contains("/charts/") {
+            fragments.push(decoded);
+        }
+    }
+
+    let joined = fragments.join("");
+    if joined.contains("clear-status-table") || joined.contains("/charts/") {
+        Some(joined)
+    } else {
+        None
+    }
+}
+
+fn decode_javascript_string(value: &str) -> String {
+    let wrapped = format!("\"{}\"", value);
+    serde_json::from_str::<String>(&wrapped).unwrap_or_else(|_| {
+        value
+            .replace("\\\"", "\"")
+            .replace("\\n", "\n")
+            .replace("\\t", "\t")
+            .replace("\\/", "/")
+            .replace("\\\\", "\\")
+    })
 }
 
 fn normalize_row(md5: &str, cells: &[ElementRef<'_>]) -> Value {
@@ -720,6 +775,43 @@ mod tests {
         assert_eq!(result.entries[0]["rank"], 61);
         assert_eq!(result.entries[1]["lampStatus"], "NO PLAY");
         assert!(result.entries[1]["exScore"].is_null());
+    }
+
+    #[test]
+    fn clear_status_parser_reads_rows_without_tbody() {
+        let html = r#"
+          <html><body><h3>クリア状況 — テスト (発狂BMS難易度表)</h3>
+          <table class="clear-status-table">
+            <tr><th>Lv</th><th>Title</th><th>Rank ↕</th><th>EX ↕</th><th>% ↕</th><th>BP ↕</th></tr>
+            <tr><td>★1</td><td class="clear-status-title-cell cb-easy"><a href="/charts/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb">Server source row</a></td><td>12 / 345</td><td>1,234 / 2,000</td><td>61.70% (B)</td><td>45</td></tr>
+          </table></body></html>
+        "#;
+        let result = parse_clear_status(html, "1").unwrap();
+        assert_eq!(result.entries.len(), 1);
+        assert_eq!(result.entries[0]["md5"], "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+        assert_eq!(result.entries[0]["lampStatus"], "EASY CLEAR");
+        assert_eq!(result.entries[0]["rank"], 12);
+        assert_eq!(result.entries[0]["exScore"], 1234);
+    }
+
+    #[test]
+    fn clear_status_parser_reads_next_stream_embedded_table() {
+        let embedded = r#"<h3>クリア状況 — テスト (発狂BMS難易度表)</h3>
+          <table class="clear-status-table"><thead><tr><th>Lv</th><th>Title</th><th>Rank ↕</th><th>EX ↕</th><th>% ↕</th><th>BP ↕</th></tr></thead>
+          <tbody>
+            <tr><td>★1</td><td class="clear-status-title-cell cb-hard"><a href="/charts/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa">Streamed</a></td><td>7 / 100</td><td>2,900 / 3,000</td><td>96.67% (AAA)</td><td>12</td></tr>
+          </tbody></table>"#;
+        let escaped = serde_json::to_string(embedded).unwrap();
+        let html = format!(
+            r#"<html><body><p>ページを読み込み中</p><script>self.__next_f.push([1,{escaped}])</script></body></html>"#
+        );
+
+        let result = parse_clear_status(&html, "1").unwrap();
+        assert_eq!(result.name, "テスト");
+        assert_eq!(result.entries.len(), 1);
+        assert_eq!(result.entries[0]["md5"], "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+        assert_eq!(result.entries[0]["lampStatus"], "HARD CLEAR");
+        assert_eq!(result.entries[0]["exScore"], 2900);
     }
 
     #[test]

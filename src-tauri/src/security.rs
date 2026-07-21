@@ -1,7 +1,7 @@
 use std::net::{IpAddr, SocketAddr};
 
 use encoding_rs::{Encoding, UTF_8};
-use reqwest::header::{CONTENT_LENGTH, CONTENT_TYPE, LOCATION};
+use reqwest::header::{ACCEPT, CONTENT_LENGTH, CONTENT_TYPE, LOCATION, USER_AGENT};
 use url::Url;
 
 use crate::api::AppState;
@@ -20,7 +20,19 @@ pub async fn fetch_public_text(raw_url: &str, state: &AppState) -> Result<Remote
     let mut url = normalize_remote_url(raw_url)?;
     for _ in 0..=MAX_REDIRECTS {
         validate_public_target(&url).await?;
-        let response = state.client.get(url.clone()).send().await?;
+        let response = state
+            .client
+            .get(url.clone())
+            .header(
+                USER_AGENT,
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) L2TV/3.0",
+            )
+            .header(
+                ACCEPT,
+                "text/html,application/xhtml+xml,application/xml;q=0.9,text/plain;q=0.8,*/*;q=0.7",
+            )
+            .send()
+            .await?;
         if response.status().is_redirection() {
             let location = response
                 .headers()

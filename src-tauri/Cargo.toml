@@ -1,6 +1,6 @@
 [package]
 name = "l2tv-tauri"
-version = "3.0.0"
+version = "3.1.0"
 description = "L2TV Tauri 2 edition"
 authors = ["HiLowPsi"]
 edition = "2024"
@@ -48,3 +48,26 @@ lto = true
 opt-level = "s"
 panic = "abort"
 strip = "symbols"
+
+[patch.crates-io]
+block-buffer = { path = "../vendor/block-buffer-0.12.1" }
+const-oid = { path = "../vendor/const-oid-0.10.2" }
+crypto-common = { path = "../vendor/crypto-common-0.2.2" }
+cssparser = { path = "../vendor/cssparser-0.37.0" }
+cssparser-macros = { path = "../vendor/cssparser-macros-0.7.0" }
+digest = { path = "../vendor/digest-0.11.3" }
+ego-tree = { path = "../vendor/ego-tree-0.11.0" }
+hashbrown = { path = "../vendor/hashbrown-0.16.1" }
+hashlink = { path = "../vendor/hashlink-0.12.1" }
+html5ever = { path = "../vendor/html5ever-0.39.0" }
+hybrid-array = { path = "../vendor/hybrid-array-0.4.13" }
+libsqlite3-sys = { path = "../vendor/libsqlite3-sys-0.38.1" }
+markup5ever = { path = "../vendor/markup5ever-0.39.0" }
+rfd = { path = "../vendor/rfd-0.17.2" }
+rsqlite-vfs = { path = "../vendor/rsqlite-vfs-0.1.1" }
+rusqlite = { path = "../vendor/rusqlite-0.40.1" }
+scraper = { path = "../vendor/scraper-0.27.0" }
+selectors = { path = "../vendor/selectors-0.38.0" }
+sha1 = { path = "../vendor/sha1-0.11.0" }
+sha2 = { path = "../vendor/sha2-0.11.0" }
+sqlite-wasm-rs = { path = "../vendor/sqlite-wasm-rs-0.5.5" }

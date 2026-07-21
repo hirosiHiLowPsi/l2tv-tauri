@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 use chrono::{Datelike, Local, NaiveDate, TimeZone};
 use encoding_rs::SHIFT_JIS;
@@ -21,6 +22,7 @@ use crate::tables;
 
 const FORCE_CONSTANTS_JSON: &str = include_str!("../../public/data/force-chart-constants.json");
 const COURSE_HASHES_JSON: &str = include_str!("../../public/data/local-course-hashes.json");
+const IR_RANK_INDEX_JSON: &str = include_str!("../../public/data/ir-rank-top100.json");
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -98,6 +100,18 @@ struct RivalData {
     path: String,
     players: Vec<Value>,
     by_hash: HashMap<String, Vec<Value>>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct IrRankIndex {
+    limit: i64,
+    charts: HashMap<String, IrRankEntry>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct IrRankEntry {
+    total_players: i64,
+    scores: Vec<i64>,
 }
 
 #[derive(Clone, Debug)]
@@ -355,6 +369,7 @@ pub async fn analyze(body: Value, state: &AppState) -> Result<Value> {
         .into_iter()
         .map(|table| enrich_table(table, &player, &rival))
         .collect();
+    let ir_rankings = summarize_embedded_ir_rankings(&enriched_tables);
     let local_state = json!({
         "scoreDb": sync_file_state(&player.score_db_path),
         "songDb": sync_file_state(&player.song_db_path),
@@ -410,6 +425,7 @@ pub async fn analyze(body: Value, state: &AppState) -> Result<Value> {
             "players": rival.players,
         },
         "tableErrors": table_errors,
+        "irRankings": ir_rankings,
         "tables": enriched_tables,
         "unlistedUpdateCharts": unlisted,
     }))
@@ -2216,6 +2232,96 @@ fn load_rival_name(directory: &Path, id: &str) -> String {
         .to_string()
 }
 
+fn embedded_ir_rank_index() -> &'static IrRankIndex {
+    static INDEX: OnceLock<IrRankIndex> = OnceLock::new();
+    INDEX.get_or_init(parse_embedded_ir_rank_index)
+}
+
+fn parse_embedded_ir_rank_index() -> IrRankIndex {
+    let Ok(value) = serde_json::from_str::<Value>(IR_RANK_INDEX_JSON) else {
+        return IrRankIndex::default();
+    };
+    let limit = value
+        .get("limit")
+        .and_then(Value::as_i64)
+        .filter(|value| *value > 0)
+        .unwrap_or(100);
+    let mut charts = HashMap::new();
+    if let Some(object) = value.get("charts").and_then(Value::as_object) {
+        for (md5, item) in object {
+            let md5 = valid_hex(md5.to_string(), 32);
+            let Some(values) = item.as_array() else {
+                continue;
+            };
+            let Some(total_players) = values.first().and_then(Value::as_i64) else {
+                continue;
+            };
+            let scores = values
+                .iter()
+                .skip(1)
+                .filter_map(Value::as_i64)
+                .filter(|value| *value >= 0)
+                .collect::<Vec<_>>();
+            if md5.is_empty() || scores.is_empty() {
+                continue;
+            }
+            charts.insert(
+                md5,
+                IrRankEntry {
+                    total_players,
+                    scores,
+                },
+            );
+        }
+    }
+    IrRankIndex { limit, charts }
+}
+
+fn embedded_ir_rank(md5: &str, ex_score: Option<i64>) -> Value {
+    let md5 = valid_hex(md5.to_string(), 32);
+    let Some(entry) = embedded_ir_rank_index().charts.get(&md5) else {
+        return Value::Null;
+    };
+    let total_players = entry
+        .total_players
+        .max(i64::try_from(entry.scores.len()).unwrap_or(0));
+    let Some(ex_score) = ex_score else {
+        return json!({
+            "rank": Value::Null,
+            "totalPlayers": total_players,
+            "rankLimit": embedded_ir_rank_index().limit,
+            "outOfRange": false,
+            "source": "lr2ir-archive-top100",
+        });
+    };
+    if let Some(index) = entry.scores.iter().position(|score| ex_score >= *score) {
+        let rank = i64::try_from(index + 1).unwrap_or(1);
+        let top_percent = if total_players > 0 {
+            Some(round2(rank as f64 / total_players as f64 * 100.0))
+        } else {
+            None
+        };
+        return json!({
+            "rank": rank,
+            "totalPlayers": total_players,
+            "topPercent": top_percent,
+            "rankLimit": embedded_ir_rank_index().limit,
+            "outOfRange": false,
+            "estimated": true,
+            "source": "lr2ir-archive-top100",
+        });
+    }
+    json!({
+        "rank": Value::Null,
+        "totalPlayers": total_players,
+        "rankLimit": embedded_ir_rank_index().limit,
+        "outOfRange": true,
+        "thresholdScore": entry.scores.last().copied(),
+        "estimated": true,
+        "source": "lr2ir-archive-top100",
+    })
+}
+
 fn enrich_table(mut table: Value, player: &PlayerData, rival: &RivalData) -> Value {
     let charts = table
         .get_mut("charts")
@@ -2356,6 +2462,56 @@ fn enrich_table(mut table: Value, player: &PlayerData, rival: &RivalData) -> Val
                 "rivalComparison".into(),
                 rival_comparison(&md5, score, rival),
             );
+            let ir_rank = embedded_ir_rank(&md5, score.and_then(|entry| entry.ex_score));
+            object.insert(
+                "irRank".into(),
+                ir_rank
+                    .get("rank")
+                    .and_then(Value::as_i64)
+                    .map(Value::from)
+                    .unwrap_or(Value::Null),
+            );
+            object.insert(
+                "irTotalPlayers".into(),
+                ir_rank
+                    .get("totalPlayers")
+                    .and_then(Value::as_i64)
+                    .map(Value::from)
+                    .unwrap_or(Value::Null),
+            );
+            object.insert(
+                "irTopPercent".into(),
+                ir_rank
+                    .get("topPercent")
+                    .and_then(Value::as_f64)
+                    .and_then(Number::from_f64)
+                    .map(Value::Number)
+                    .unwrap_or(Value::Null),
+            );
+            object.insert(
+                "irRankLimit".into(),
+                ir_rank
+                    .get("rankLimit")
+                    .and_then(Value::as_i64)
+                    .map(Value::from)
+                    .unwrap_or(Value::Null),
+            );
+            object.insert(
+                "irRankOutOfRange".into(),
+                ir_rank
+                    .get("outOfRange")
+                    .and_then(Value::as_bool)
+                    .map(Value::Bool)
+                    .unwrap_or(Value::Null),
+            );
+            object.insert(
+                "irRankThresholdScore".into(),
+                ir_rank
+                    .get("thresholdScore")
+                    .and_then(Value::as_i64)
+                    .map(Value::from)
+                    .unwrap_or(Value::Null),
+            );
             chart
         })
         .collect();
@@ -2391,6 +2547,47 @@ fn rival_comparison(md5: &str, score: Option<&ScoreEntry>, rival: &RivalData) ->
         "selfLamp": score.map(|entry| entry.lamp_status.as_str()).unwrap_or("NO PLAY"), "scoreDiff": diff,
         "scoreResult": diff.map(|value| if value > 0 { "win" } else if value < 0 { "lose" } else { "draw" }).unwrap_or("unknown"),
         "lampResult": "unknown",
+    })
+}
+
+fn summarize_embedded_ir_rankings(tables: &[Value]) -> Value {
+    let mut indexed = 0usize;
+    let mut ranked = 0usize;
+    let mut out_of_range = 0usize;
+    for chart in tables
+        .iter()
+        .filter_map(|table| table.get("charts").and_then(Value::as_array))
+        .flatten()
+    {
+        if chart
+            .get("irTotalPlayers")
+            .and_then(Value::as_i64)
+            .is_some_and(|value| value > 0)
+        {
+            indexed += 1;
+        }
+        if chart
+            .get("irRank")
+            .and_then(Value::as_i64)
+            .is_some_and(|value| value > 0)
+        {
+            ranked += 1;
+        }
+        if chart
+            .get("irRankOutOfRange")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
+            out_of_range += 1;
+        }
+    }
+    json!({
+        "source": "lr2ir-archive-top100",
+        "rankLimit": embedded_ir_rank_index().limit,
+        "indexedCharts": indexed,
+        "matchedCharts": ranked,
+        "outOfRangeCharts": out_of_range,
+        "embeddedCharts": embedded_ir_rank_index().charts.len(),
     })
 }
 

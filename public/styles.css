@@ -3014,6 +3014,12 @@ body[data-theme="lr2ir-dark"] .force-rating-help-close-button:hover {
   color: #102b40;
 }
 
+.chart-ir-rank-badge.ir-rank-out-of-range {
+  border-color: color-mix(in srgb, var(--muted) 55%, var(--border));
+  background: color-mix(in srgb, var(--panel-strong) 82%, var(--muted) 18%);
+  color: var(--muted);
+}
+
 .chart-ir-rank-cell {
   text-align: center;
 }

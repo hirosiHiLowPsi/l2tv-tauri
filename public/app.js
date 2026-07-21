@@ -826,7 +826,6 @@ function initializeIrDisplayControls() {
   };
 
   const handleChange = async () => {
-    const wasEnabled = shouldFetchOwnStellaverseRankings();
     showIrRankInChartList = showIrRankInput?.checked ?? true;
     showIrStatusInTableSummary = showIrStatusInput?.checked ?? true;
     syncControlValues();
@@ -836,11 +835,6 @@ function initializeIrDisplayControls() {
       return;
     }
 
-    if (!wasEnabled && shouldFetchOwnStellaverseRankings()) {
-      await refreshOwnStellaverseRankings(latestAnalysis);
-      void persistLatestAnalysis(latestAnalysis).catch((error) => console.error("Failed to persist analysis", error));
-      setStatus(buildStatusMessage(latestAnalysis));
-    }
     renderAnalysis();
   };
 
@@ -854,12 +848,11 @@ function initializeIrDisplayControls() {
 }
 
 function shouldFetchOwnStellaverseRankings() {
-  return canUseStellaverseNetwork()
-    && (showIrRankInChartList || showIrStatusInTableSummary);
+  return false;
 }
 
 function canUseStellaverseNetwork() {
-  return gameDataMode !== "beatoraja" && allowStellaverseNetwork;
+  return false;
 }
 
 function initializeStellaverseNetworkConsent() {
@@ -982,8 +975,8 @@ function syncGameDataModeControls() {
 
   scoreDbModeField?.classList.toggle("hidden", isBeatoraja);
   rivalFolderField?.classList.toggle("hidden", isBeatoraja);
-  stellaverseNetworkConsent?.classList.toggle("hidden", isBeatoraja);
-  stellaverseNetworkHelper?.classList.toggle("hidden", isBeatoraja);
+  stellaverseNetworkConsent?.classList.add("hidden");
+  stellaverseNetworkHelper?.classList.add("hidden");
   if (isBeatoraja) {
     setRivalPanelOpen(false, { closeOther: false });
     rivalToggleButton?.classList.add("hidden");
@@ -2601,18 +2594,11 @@ form.addEventListener("submit", async (event) => {
       skillAnalyzerFetchMode,
       gameDataMode,
       scoreDbMode,
-      allowStellaverseNetwork: isBeatoraja ? false : allowStellaverseNetwork,
+      allowStellaverseNetwork: false,
     });
 
     latestAnalysis = normalizeAnalysisLampStatuses(payload);
     cacheLatestAnalysis(latestAnalysis);
-    if (!isBeatoraja && allowStellaverseNetwork && stellaverseRivalIds.size > 0) {
-      setStatus("Stellaverse IRからライバルスコアを取得しています。");
-      await refreshSavedStellaverseRivals();
-    }
-    if (shouldFetchOwnStellaverseRankings()) {
-      await refreshOwnStellaverseRankings(latestAnalysis);
-    }
     if (areRivalFeaturesAvailable()) {
       syncSelectedRivalsWithAnalysis(latestAnalysis);
     }
@@ -3150,8 +3136,6 @@ function renderRivalPanel() {
 
   header.append(title, closeButton);
   rivalPanel.append(header);
-
-  rivalPanel.append(createStellaverseRivalImportControl());
 
   if (!rivals.length) {
     translateApp(rivalPanel);
@@ -7658,6 +7642,27 @@ function createIrRankCell(chart) {
   const rank = Number(chart?.irRank);
   const totalPlayers = Number(chart?.irTotalPlayers);
   if (!Number.isFinite(rank) || rank <= 0 || !Number.isFinite(totalPlayers) || totalPlayers <= 0) {
+    if (chart?.irRankOutOfRange) {
+      const limit = Number(chart?.irRankLimit);
+      const threshold = Number(chart?.irRankThresholdScore);
+      const label = Number.isFinite(limit) && limit > 0
+        ? (selectedLanguage === "en" ? `Outside Top ${formatInteger(limit)}` : `${formatInteger(limit)}位外`)
+        : (selectedLanguage === "en" ? "Outside rank" : "順位外");
+      const badge = document.createElement("div");
+      badge.className = "chart-ir-rank-badge ir-rank-out-of-range";
+      const rankLine = document.createElement("strong");
+      rankLine.textContent = label;
+      badge.append(rankLine);
+      if (Number.isFinite(threshold) && threshold > 0) {
+        const thresholdLine = document.createElement("span");
+        thresholdLine.textContent = selectedLanguage === "en"
+          ? `Top ${formatInteger(limit)}: ${formatInteger(threshold)}`
+          : `${formatInteger(limit)}位: ${formatInteger(threshold)}`;
+        badge.append(thresholdLine);
+      }
+      cell.append(badge);
+      return cell;
+    }
     cell.innerHTML = '<span class="dimmed">NO Data</span>';
     return cell;
   }
@@ -7929,11 +7934,11 @@ function buildStatusMessage(analysis) {
     lines.push(`読み込み失敗の難易度表: ${analysis.tableErrors.length}件`);
   }
 
-  if (analysis.stellaverseRankings && shouldFetchOwnStellaverseRankings()) {
-    lines.push(`Stellaverse IR順位: ${formatInteger(analysis.stellaverseRankings.matchedCharts)}譜面`);
-    if (analysis.stellaverseRankings.failedTables?.length) {
-      lines.push(`IR順位の取得失敗: ${analysis.stellaverseRankings.failedTables.length}表`);
-    }
+  if (analysis.irRankings?.source === "lr2ir-archive-top100") {
+    const limit = Number(analysis.irRankings.rankLimit) || 100;
+    lines.push(
+      `Archive推定IR順位: ${formatInteger(analysis.irRankings.matchedCharts ?? 0)}譜面 / ${formatInteger(limit)}位外 ${formatInteger(analysis.irRankings.outOfRangeCharts ?? 0)}譜面`,
+    );
   }
 
   return lines.join("\n");

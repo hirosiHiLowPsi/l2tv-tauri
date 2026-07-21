@@ -111,11 +111,11 @@
               </select>
             </label>
 
-            <label id="stellaverse-network-consent" class="checkbox-setting stellaverse-network-consent">
+            <label id="stellaverse-network-consent" class="checkbox-setting stellaverse-network-consent hidden">
               <input id="allow-stellaverse-network" type="checkbox" name="allowStellaverseNetwork" />
               <span>Stellaverse IRへの接続を許可する</span>
             </label>
-            <p id="stellaverse-network-helper" class="helper">ONにするとプレイヤーIDをStellaverse IRへ送信し、名前・順位・公開スコアを取得します。DBファイルやローカルスコアは送信しません。</p>
+            <p id="stellaverse-network-helper" class="helper hidden">現在この機能は使用しません。</p>
 
             <div class="form-actions">
               <div class="action-row">
@@ -188,7 +188,7 @@
               <small>更新・保存先・データ</small>
             </summary>
             <div class="settings-group-body">
-              <label id="rival-folder-field" class="field">
+              <label class="field">
                 <span>スクショ保存先</span>
                 <div class="path-picker">
                   <input
@@ -200,7 +200,7 @@
                 </div>
               </label>
 
-              <label class="field">
+              <label id="rival-folder-field" class="field">
                 <span>ライバルフォルダ</span>
                 <div class="path-picker">
                   <input

@@ -4,7 +4,7 @@ $root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $dist = Join-Path $root "dist"
 $stage = Join-Path $dist "release-stage"
 $package = Join-Path $stage "L2TV"
-$archive = Join-Path $dist "L2TV-Tauri-v3.0.0-win-x64.7z"
+$archive = Join-Path $dist "L2TV-Tauri-v3.1.0-win-x64.7z"
 $executable = Join-Path $root "src-tauri\target\release\L2TV.exe"
 
 if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {
