@@ -7,14 +7,14 @@
 L2TVの既存UIと主要機能を、Electronから **Tauri 2 + WebView2 + Rust + SQLite** へ移植したWindows向けデスクトップアプリです。
 
 - 制作: HiLowPsi
-- バージョン: 3.0.0
+- バージョン: 3.1.0
 - 対応OS: Windows 10 / 11 64bit
 - ライセンス: MIT
 - ソース: https://github.com/hirosiHiLowPsi/l2tv-tauri
 
 ## 目的
 
-Electron版の操作感を維持しながら、配布容量と実行時メモリを減らすための別プロジェクトです。画面にはElectron版と同じHTML/CSS/JavaScriptを使用し、ローカルDB処理・難易度表取得・Stellaverse IR連携をRustで実行します。
+Electron版の操作感を維持しながら、配布容量と実行時メモリを減らすための別プロジェクトです。画面にはElectron版と同じHTML/CSS/JavaScriptを使用し、ローカルDB処理・難易度表取得・Archive推定IR順位をRustで実行します。
 
 ## 主な機能
 
@@ -26,8 +26,8 @@ Electron版の操作感を維持しながら、配布容量と実行時メモリ
 - beatorajaの`scoredatalog.db`を使った年別プレイ履歴カレンダーと日別更新内容を、Player Data直下に常時表示
 - GENOSIDE2018 SP段位、st/sl段位、歴代Overjoy合格表示
 - FORCE RATE、対象51件、前回比、画像出力
-- LR2 / OpenLR2モードでのローカルRival DBとStellaverse Rival IDによる比較（beatorajaモードではライバル機能を非表示）
-- Stellaverse IRプロフィール・順位取得のON/OFF
+- LR2 / OpenLR2モードでの従来方式のローカルRival DB読み込みによる比較（beatorajaモードではライバル機能を非表示）
+- LR2IR Archiveを基にした同梱データによる推定IR順位表示（対象譜面の上位100スコアまで、Stellaverse IRへのオンライン順位取得は使用しません）
 - 日本語 / English、Light / Darkテーマ
 - 本日更新、難易度表、FORCE RATE対象のPNG保存
 - 同梱の専用抽出ツール、またはElectron版のメニューを使ったJSON引継ぎ（設定、難易度表、ライバルID、前回解析結果）
@@ -38,7 +38,7 @@ Electron版の操作感を維持しながら、配布容量と実行時メモリ
 - Microsoft Edge WebView2 Runtime
 - LR2 / OpenLR2を使う場合: `score.db`と`song.db`
 - beatorajaを使う場合: プレイヤーフォルダの`score.db`と、beatoraja直下の`songdata.db`
-- 難易度表やStellaverse IRを使用する場合はインターネット接続
+- 難易度表をオンライン取得する場合はインターネット接続
 
 Windows 10 / 11では通常WebView2が導入済みです。起動できない場合はMicrosoft公式のWebView2 Runtimeを導入してください。
 
@@ -81,16 +81,16 @@ Electron版とTauri版では保存領域が異なるため、専用JSONを介し
 
 引継ぎ対応済みのElectron版を起動できる場合は、Electron版のメニュー`その他`にある`引継ぎデータを書き出す`から同じ形式のJSONを保存できます。その後はTauri版の`引継ぎデータを読み込む`を使用します。
 
-引き継ぐ内容は、ゲームモード、DBパスなどの設定、表示設定、難易度表の選択・順序・追加URL、Stellaverse Rival ID、前回の解析結果です。DBファイルそのものはコピーせず、元のファイルを引き続き読み取り専用で参照します。
+引き継ぐ内容は、ゲームモード、DBパスなどの設定、表示設定、難易度表の選択・順序・追加URL、ローカルRival DB設定、前回の解析結果です。DBファイルそのものはコピーせず、元のファイルを引き続き読み取り専用で参照します。
 
-引継ぎJSONにはローカルファイルのパス、プレイヤー情報、ライバルIDなどが含まれる場合があります。公開したり他人へ渡したりせず、移行後に不要なら削除してください。詳しい手順は同梱の`Electron版データ引継ぎツール.txt`にも記載しています。
+引継ぎJSONにはローカルファイルのパス、プレイヤー情報、ライバル設定などが含まれる場合があります。公開したり他人へ渡したりせず、移行後に不要なら削除してください。詳しい手順は同梱の`Electron版データ引継ぎツール.txt`にも記載しています。
 
 ## データと通信
 
 - `score.db`、`song.db`、`songdata.db`、`scoredatalog.db`、Rival DBは読み取り専用で開き、書き換えません。
 - ローカルDBを外部へアップロードしません。
 - 難易度表の取得時は、選択した難易度表URLへ通信します。
-- Stellaverse IR連携はメニューで有効にした場合だけ通信します。
+- IR順位表示は同梱のArchive推定データを使用します。Stellaverse IRへのオンライン順位取得は行いません。
 - 外部通信にはタイムアウト、同時実行制限、キャッシュ、ローカル/プライベートIP拒否を設定しています。
 - アプリ設定はWindowsユーザーごとのWebView2領域に保存されます。
 
@@ -131,16 +131,16 @@ beatorajaを検証する場合は、上記2パスをbeatorajaのDBへ変え、`$
 - `src-tauri/src/openlr2_random.rs`: OpenLR2互換のSP 7KEY通常RANDOM配置生成
 - `src-tauri/src/beatoraja_random.rs`: `java.util.Random`互換のbeatoraja SP 7KEY通常RANDOM / R-RANDOM配置生成
 - `src-tauri/src/tables.rs`: 難易度表一覧と表データ取得
-- `src-tauri/src/stellaverse.rs`: Stellaverse IR連携
+- `src-tauri/src/stellaverse.rs`: 旧Stellaverse連携処理（3.1.0ではオンライン順位取得に使用しません）
 - `src-tauri/src/security.rs`: URLと接続先の検証
 - `src-tauri/src/commands.rs`: Tauriネイティブコマンド
 - `src-tauri/src/electron_transfer_exporter.rs`: 旧Electron保存領域からの引継ぎJSON抽出
 
-## バージョン3.0.0について
+## バージョン3.1.0について
 
-3.0.0はTauri版L2TVの正式リリースです。Electron版とは別アプリとして配布し、自動更新は行いません。設定移行には上記の引継ぎJSONを使用してください。L2TVはDBを読み取り専用で扱いますが、大切なゲームデータは通常どおりバックアップを維持してください。
+3.1.0では、Stellaverse IRへのオンライン順位取得を使わず、LR2IR Archiveを基にした同梱データで推定IR順位を表示する方式へ変更しました。ライバル機能は従来どおり、LR2 / OpenLR2のローカルRival DBを読み込む方式です。Electron版とは別アプリとして配布し、自動更新は行いません。設定移行には上記の引継ぎJSONを使用してください。L2TVはDBを読み取り専用で扱いますが、大切なゲームデータは通常どおりバックアップを維持してください。
 
-詳しい更新内容は`RELEASE_NOTES_3.0.0.md`を参照してください。
+詳しい更新内容は同梱のリリースノートを参照してください。
 
 ## ライセンス
 
