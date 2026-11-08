@@ -35,7 +35,7 @@ jobs:
         shell: pwsh
         run: pwsh -NoProfile -File scripts/verify-release.ps1 -VerifyArchive
       - name: Upload workflow artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: L2TV-Tauri-Windows-x64
           path: |
